@@ -179,15 +179,8 @@
             newPads[i].url = prev[i].url;
             newPads[i].settings = prev[i].settings;
           }
-          // Try to load from DB if expanding (e.g. 10->20, check if 11-20 exist in DB)
+          // Try to load from DB if expanding
           if (newCount > prev.length) {
-             // Since we can't await inside setState easily, we just init with default.
-             // To restore hidden data properly, we should ideally reload from DB, 
-             // but simplified approach: assume empty for new slots or reload page.
-             // For better UX, let's try to fetch missing ones in a separate effect if needed,
-             // but here we just reset new slots.
-             // *Self-correction*: The user might have data in 11-20 from before. 
-             // We will trigger a background load for new slots.
              loadExtraPads(newPads, prev.length, newCount);
           }
           return newPads;
@@ -205,10 +198,9 @@
                   ...newPads[i], 
                   ...data, 
                   settings, 
-                  buffer: null, // Buffer needs decoding, handled by file upload or init
+                  buffer: null, 
                   url: data.blob ? URL.createObjectURL(data.blob) : null 
                };
-               // If audio context is ready, we should decode. 
                if (audioCtx && data.blob) {
                   try {
                     const ab = await data.blob.arrayBuffer();
@@ -281,13 +273,7 @@
         setIsProcessing(true);
         try {
           const zip = new JSZip();
-          const metadata = { 
-            transitionMode, 
-            crossfadeDuration, 
-            padCount, // Save pad count
-            timestamp: new Date().toISOString(), 
-            pads: [] 
-          };
+          const metadata = { transitionMode, crossfadeDuration, timestamp: new Date().toISOString(), pads: [] };
           pads.forEach((pad, idx) => {
             const padMeta = { id: idx, name: pad.name, keyTrigger: pad.keyTrigger, settings: pad.settings, hasAudio: false };
             if (pad.blob) {
@@ -321,22 +307,14 @@
           if (!zip.file("project.json")) throw new Error("Invalid project file");
           const metaStr = await zip.file("project.json").async("string");
           const metadata = JSON.parse(metaStr);
-          
           if (metadata.transitionMode) setTransitionMode(metadata.transitionMode);
           if (metadata.crossfadeDuration) setCrossfadeDuration(metadata.crossfadeDuration);
-          
-          // Restore Pad Count
-          const count = metadata.padCount || 10;
-          setPadCount(count);
-          await idbKeyval.set('padCount', count);
-
-          const newPads = generatePads(count);
+          const newPads = generatePads();
           const ctx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
           if (!audioCtx) setAudioCtx(ctx);
-          
           await Promise.all(metadata.pads.map(async (padMeta) => {
             const index = padMeta.id;
-            if (index >= 0 && index < count) {
+            if (index >= 0 && index < PAD_COUNT) {
               const settings = { loop: false, ...padMeta.settings };
               newPads[index] = { ...newPads[index], name: padMeta.name, settings };
               if (padMeta.hasAudio && padMeta.fileName) {
@@ -456,10 +434,8 @@
       useEffect(() => {
         const handleKeyDown = (e) => {
           if (!isReady || isEditMode || e.target.tagName === 'INPUT') return;
-          // Normalize key to handle CAPS LOCK or Shift
           const key = e.key.toLowerCase();
           const idx = KEY_MAP.indexOf(key);
-          // Only trigger if key is valid for current pad count
           if (idx !== -1 && idx < padCount) triggerPad(idx);
         };
         window.addEventListener('keydown', handleKeyDown);
@@ -488,10 +464,10 @@
         );
       }
 
-      // Dynamic Grid Class
+      // Dynamic Grid Class - Modified for better mobile 20-pad view
       const gridClass = padCount === 10 
         ? "grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-4" 
-        : "grid grid-cols-4 sm:grid-cols-5 gap-2 sm:gap-4"; // 20 pads layout
+        : "grid grid-cols-3 sm:grid-cols-5 gap-2 sm:gap-4"; // Changed mobile cols to 3
 
       return (
         <div className="flex flex-col h-screen bg-slate-900 text-slate-100 overflow-hidden select-none">
@@ -499,16 +475,7 @@
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2"><Music className="text-blue-400" /><h1 className="text-lg sm:text-xl font-bold tracking-tight">T-PAD</h1></div>
               <div className="flex items-center gap-2">
-                 {/* Pad Count Toggle */}
-                 <button 
-                   onClick={togglePadCount}
-                   disabled={isProcessing}
-                   className="flex items-center gap-1 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-bold text-slate-300 disabled:opacity-30 mr-2"
-                   title="パッド数を切替"
-                 >
-                   <Grid size={14} /> {padCount}
-                 </button>
-
+                 <button onClick={togglePadCount} disabled={isProcessing} className="flex items-center gap-1 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-bold text-slate-300 disabled:opacity-30 mr-2" title="パッド数を切替"><Grid size={14} /> {padCount}</button>
                  <button onClick={() => { setIsEditMode(!isEditMode); setSwapSourceId(null); }} className={`flex items-center gap-1 px-3 py-1.5 rounded text-xs font-bold transition-colors ${isEditMode ? 'bg-amber-600 text-white animate-pulse' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}><Edit3 size={14} /> {isEditMode ? 'EDIT中' : 'EDIT'}</button>
                  <div className="flex items-center gap-1 bg-slate-700/50 rounded p-0.5">
                    <button onClick={handleExportProject} disabled={isProcessing || isEditMode} className="p-1.5 hover:bg-slate-600 rounded text-slate-300 disabled:opacity-30"><Download size={16} /></button>
@@ -701,22 +668,22 @@
             </div>
           )}
 
-          <div className="flex flex-col items-center justify-center h-full p-4 pointer-events-none select-none relative z-10">
-            <span className="absolute top-2 left-3 font-mono text-2xl font-bold opacity-50 text-black/40">{isEditMode ? '' : pad.keyTrigger}</span>
+          <div className="flex flex-col items-center justify-center h-full p-2 sm:p-4 pointer-events-none select-none relative z-10">
+            <span className="absolute top-1 left-2 font-mono text-xl sm:text-2xl font-bold opacity-50 text-black/40">{isEditMode ? '' : pad.keyTrigger}</span>
             {!hasAudio ? (
               <div className="flex flex-col items-center text-slate-400"><Upload size={32} className={`mb-2 opacity-50 ${isEditMode ? 'hidden' : ''}`} /><span className="text-sm font-medium">{isEditMode ? '空' : '音声読込'}</span></div>
             ) : (
               <div className="text-center w-full">
-                 <div className="font-bold text-lg text-white drop-shadow-md break-all line-clamp-2 leading-tight px-1 mb-1">{pad.name}</div>
+                 <div className="font-bold text-sm sm:text-lg text-white drop-shadow-md break-all line-clamp-2 leading-tight px-1 mb-1">{pad.name}</div>
                  
                  {/* Duration Display (Dynamic) */}
                  {!isEditMode && (
-                   <div className="flex items-center justify-center gap-1 text-[12px] font-mono font-bold bg-black/30 rounded-full px-3 py-1 mx-auto w-fit text-white border border-white/20 shadow-sm">
-                     <Clock size={12} /> <span ref={timeDisplayRef}>{formatDuration(totalDuration)}</span>
+                   <div className="flex items-center justify-center gap-1 text-[10px] sm:text-[12px] font-mono font-bold bg-black/30 rounded-full px-3 py-1 mx-auto w-fit text-white border border-white/20 shadow-sm">
+                     <Clock size={10} className="sm:w-3 sm:h-3" /> <span ref={timeDisplayRef}>{formatDuration(totalDuration)}</span>
                    </div>
                  )}
 
-                 {playingInfo && (<div className="absolute bottom-1 left-0 right-0 flex justify-center"><div className="animate-pulse text-[10px] font-bold uppercase tracking-wider text-white/80">PLAYING</div></div>)}
+                 {playingInfo && (<div className="absolute bottom-1 left-0 right-0 flex justify-center"><div className="animate-pulse text-[8px] sm:text-[10px] font-bold uppercase tracking-wider text-white/80">PLAYING</div></div>)}
               </div>
             )}
           </div>
