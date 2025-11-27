@@ -1,0 +1,729 @@
+﻿<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>T's Audio Player</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React & ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- Babel (for JSX) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- IDB-Keyval (For saving data) -->
+  <script src="https://unpkg.com/idb-keyval@6.2.0/dist/umd.js"></script>
+  <!-- JSZip (For project file compression) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+  <style>
+    /* Prevent pull-to-refresh on mobile */
+    body {
+      overscroll-behavior-y: contain;
+      touch-action: manipulation;
+    }
+    /* Custom scrollbar for webkit */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0f172a; 
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155; 
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #475569; 
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-white h-screen overflow-hidden">
+  <div id="root" class="h-full"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // --- Icons (Inline SVG Components) ---
+    const Icon = ({ children, size = 24, className = "" }) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{children}</svg>
+    );
+    const Music = (p) => <Icon {...p}><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></Icon>;
+    const Settings = (p) => <Icon {...p}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></Icon>;
+    const Upload = (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></Icon>;
+    const X = (p) => <Icon {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></Icon>;
+    const Volume2 = (p) => <Icon {...p}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></Icon>;
+    const Scissors = (p) => <Icon {...p}><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></Icon>;
+    const Zap = (p) => <Icon {...p}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></Icon>;
+    const Layers = (p) => <Icon {...p}><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></Icon>;
+    const ZoomIn = (p) => <Icon {...p}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></Icon>;
+    const ZoomOut = (p) => <Icon {...p}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></Icon>;
+    const Maximize = (p) => <Icon {...p}><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></Icon>;
+    const ArrowUpDown = (p) => <Icon {...p}><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></Icon>;
+    const ArrowLeftRight = (p) => <Icon {...p}><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></Icon>;
+    const Save = (p) => <Icon {...p}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></Icon>;
+    const FolderOpen = (p) => <Icon {...p}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></Icon>;
+    const Download = (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></Icon>;
+
+    // --- Constants & Helper Functions ---
+    const PAD_COUNT = 10;
+    const KEY_MAP = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
+    const COLORS = [
+      'bg-red-500', 'bg-orange-500', 'bg-amber-500', 'bg-yellow-500', 
+      'bg-lime-500', 'bg-green-500', 'bg-emerald-500', 'bg-teal-500', 
+      'bg-cyan-500', 'bg-sky-500'
+    ];
+    const FADE_DURATIONS = [0.5, 1.0, 2.0, 3.0];
+
+    const generatePads = () => {
+      return Array.from({ length: PAD_COUNT }, (_, i) => ({
+        id: i,
+        keyTrigger: KEY_MAP[i],
+        name: `Pad ${i + 1}`,
+        color: COLORS[i],
+        buffer: null,
+        blob: null, 
+        url: null,
+        settings: {
+          start: 0, end: 1, fadeIn: 0, fadeOut: 0, volume: 1,
+        }
+      }));
+    };
+
+    // --- Main Component ---
+    function SoundBoardApp() {
+      const [audioCtx, setAudioCtx] = useState(null);
+      const [pads, setPads] = useState(generatePads());
+      const [playingPads, setPlayingPads] = useState({});
+      const [editingPadId, setEditingPadId] = useState(null);
+      const [isReady, setIsReady] = useState(false);
+      const [isLoadingData, setIsLoadingData] = useState(true);
+      const [isProcessing, setIsProcessing] = useState(false);
+      const [transitionMode, setTransitionMode] = useState('CUT');
+      const [crossfadeDuration, setCrossfadeDuration] = useState(1.0);
+      
+      const activeAudioNodes = useRef({});
+      const fileInputRefs = useRef([]);
+      const projectInputRef = useRef(null);
+
+      // Load data from IndexedDB on mount
+      useEffect(() => {
+        const loadPads = async () => {
+          try {
+            const loadedPads = [...pads];
+            let hasData = false;
+            const savedMode = await idbKeyval.get('transitionMode');
+            if (savedMode) setTransitionMode(savedMode);
+            const savedDur = await idbKeyval.get('crossfadeDuration');
+            if (savedDur) setCrossfadeDuration(savedDur);
+
+            for (let i = 0; i < PAD_COUNT; i++) {
+              const data = await idbKeyval.get(`pad_${i}`);
+              if (data) {
+                loadedPads[i] = { 
+                  ...loadedPads[i], 
+                  ...data, 
+                  buffer: null, 
+                  url: data.blob ? URL.createObjectURL(data.blob) : null 
+                };
+                hasData = true;
+              }
+            }
+            if (hasData) setPads(loadedPads);
+          } catch (e) {
+            console.error("Failed to load saved data:", e);
+          } finally {
+            setIsLoadingData(false);
+          }
+        };
+        loadPads();
+      }, []);
+
+      const savePadToDb = async (pad) => {
+        try {
+          const { buffer, url, ...dataToSave } = pad;
+          await idbKeyval.set(`pad_${pad.id}`, dataToSave);
+        } catch (e) {
+          console.error("Failed to save pad:", e);
+        }
+      };
+
+      // Save Global Settings
+      useEffect(() => { idbKeyval.set('transitionMode', transitionMode); }, [transitionMode]);
+      useEffect(() => { idbKeyval.set('crossfadeDuration', crossfadeDuration); }, [crossfadeDuration]);
+
+      // --- Project File Handlers (Export/Import) ---
+      
+      const handleExportProject = async () => {
+        if (!isReady && !confirm("Audio engine not ready. Export anyway?")) return;
+        setIsProcessing(true);
+        try {
+          const zip = new JSZip();
+          const metadata = {
+            transitionMode,
+            crossfadeDuration,
+            timestamp: new Date().toISOString(),
+            pads: []
+          };
+
+          // Process each pad
+          pads.forEach(pad => {
+            const padMeta = {
+              id: pad.id,
+              name: pad.name,
+              keyTrigger: pad.keyTrigger,
+              settings: pad.settings,
+              hasAudio: false
+            };
+
+            if (pad.blob) {
+              const fileName = `audio_${pad.id}`;
+              zip.file(fileName, pad.blob);
+              padMeta.hasAudio = true;
+              padMeta.fileName = fileName;
+            }
+            metadata.pads.push(padMeta);
+          });
+
+          zip.file("project.json", JSON.stringify(metadata));
+
+          // Generate zip
+          const content = await zip.generateAsync({ type: "blob" });
+          
+          // Trigger download
+          const url = URL.createObjectURL(content);
+          const link = document.createElement("a");
+          link.href = url;
+          const dateStr = new Date().toISOString().slice(0,10).replace(/-/g,'');
+          link.download = `TsAudioPlayer_${dateStr}.tsp`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+          
+        } catch (err) {
+          console.error("Export failed", err);
+          alert("Failed to export project.");
+        } finally {
+          setIsProcessing(false);
+        }
+      };
+
+      const handleImportProject = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        if (!confirm("Loading a project will overwrite current pads. Continue?")) {
+           e.target.value = null; 
+           return;
+        }
+
+        setIsProcessing(true);
+        try {
+          const zip = await JSZip.loadAsync(file);
+          
+          // Read metadata
+          if (!zip.file("project.json")) throw new Error("Invalid project file");
+          const metaStr = await zip.file("project.json").async("string");
+          const metadata = JSON.parse(metaStr);
+
+          // Restore Global Settings
+          if (metadata.transitionMode) setTransitionMode(metadata.transitionMode);
+          if (metadata.crossfadeDuration) setCrossfadeDuration(metadata.crossfadeDuration);
+
+          // Restore Pads
+          const newPads = generatePads();
+          const ctx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+          if (!audioCtx) setAudioCtx(ctx);
+
+          await Promise.all(metadata.pads.map(async (padMeta) => {
+            const index = padMeta.id;
+            if (index >= 0 && index < PAD_COUNT) {
+              newPads[index] = {
+                ...newPads[index],
+                name: padMeta.name,
+                settings: padMeta.settings,
+              };
+
+              if (padMeta.hasAudio && padMeta.fileName) {
+                const audioBlob = await zip.file(padMeta.fileName).async("blob");
+                const arrayBuffer = await audioBlob.arrayBuffer();
+                const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+                
+                newPads[index].blob = audioBlob;
+                newPads[index].buffer = audioBuffer;
+                newPads[index].url = URL.createObjectURL(audioBlob);
+                
+                // Save to IndexedDB immediately
+                await savePadToDb(newPads[index]); 
+              } else {
+                 // Clear DB for empty pads
+                 await idbKeyval.del(`pad_${index}`);
+              }
+            }
+          }));
+
+          setPads(newPads);
+          if (!isReady) setIsReady(true);
+          if (ctx.state === 'suspended') ctx.resume();
+          alert("Project loaded successfully!");
+
+        } catch (err) {
+          console.error("Import failed", err);
+          alert("Failed to load project file. Format might be invalid.");
+        } finally {
+          setIsProcessing(false);
+          e.target.value = null; // Reset input
+        }
+      };
+
+      const initAudio = async () => {
+        if (!audioCtx) {
+          setIsProcessing(true);
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          setAudioCtx(ctx);
+
+          const newPads = [...pads];
+          await Promise.all(newPads.map(async (pad, idx) => {
+            if (pad.blob && !pad.buffer) {
+              try {
+                const arrayBuffer = await pad.blob.arrayBuffer();
+                const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+                newPads[idx].buffer = audioBuffer;
+              } catch (e) {
+                console.error("Failed to decode pad " + idx, e);
+                newPads[idx].name = "Load Failed";
+              }
+            }
+          }));
+
+          setPads(newPads);
+          setIsReady(true);
+          setIsProcessing(false);
+          ctx.resume();
+        } else if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+          setIsReady(true);
+        }
+      };
+
+      const stopPad = useCallback((padId, mode = 'CUT', duration = 0) => {
+        const nodes = activeAudioNodes.current[padId];
+        if (!nodes || !audioCtx) return;
+
+        try {
+          const { source, gain } = nodes;
+          if (nodes.isStopping) return;
+          nodes.isStopping = true;
+
+          if (mode === 'FADE' && duration > 0) {
+            gain.gain.cancelScheduledValues(audioCtx.currentTime);
+            gain.gain.setValueAtTime(gain.gain.value, audioCtx.currentTime);
+            gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + duration);
+            source.stop(audioCtx.currentTime + duration);
+          } else {
+            source.stop();
+          }
+        } catch (e) {
+          console.error("Error stopping sound:", e);
+        }
+      }, [audioCtx]);
+
+      const triggerPad = useCallback((padId) => {
+        const pad = pads[padId];
+        if (!pad.buffer || !audioCtx) return;
+        const now = audioCtx.currentTime;
+        if (activeAudioNodes.current[padId]) {
+          stopPad(padId, transitionMode, crossfadeDuration);
+          return;
+        }
+        Object.keys(activeAudioNodes.current).forEach((activeId) => {
+          const id = parseInt(activeId);
+          if (id !== padId) {
+            stopPad(id, transitionMode, crossfadeDuration);
+          }
+        });
+        const source = audioCtx.createBufferSource();
+        source.buffer = pad.buffer;
+        const gainNode = audioCtx.createGain();
+        source.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        const duration = pad.buffer.duration;
+        const startTime = pad.settings.start * duration;
+        const endTime = pad.settings.end * duration;
+        const playDuration = Math.max(0, endTime - startTime);
+        gainNode.gain.value = pad.settings.volume;
+        if (pad.settings.fadeIn > 0) {
+          gainNode.gain.setValueAtTime(0, now);
+          gainNode.gain.linearRampToValueAtTime(pad.settings.volume, now + Math.min(pad.settings.fadeIn, playDuration));
+        }
+        if (pad.settings.fadeOut > 0) {
+          const fadeOutStart = now + playDuration - pad.settings.fadeOut;
+          gainNode.gain.setValueAtTime(pad.settings.volume, Math.max(now, fadeOutStart));
+          gainNode.gain.linearRampToValueAtTime(0, now + playDuration);
+        }
+        source.start(now, startTime, playDuration);
+        activeAudioNodes.current[padId] = { source, gain: gainNode, isStopping: false };
+        setPlayingPads(prev => ({ ...prev, [padId]: true }));
+        source.onended = () => {
+          if (activeAudioNodes.current[padId]?.source === source) {
+            delete activeAudioNodes.current[padId];
+            setPlayingPads(prev => {
+              const newState = { ...prev };
+              delete newState[padId];
+              return newState;
+            });
+          }
+        };
+      }, [audioCtx, pads, transitionMode, crossfadeDuration, stopPad]);
+
+      const handleFileUpload = async (e, index) => {
+        const file = e.target.files[0];
+        if (!file || !audioCtx) return;
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+          setPads((prev) => {
+            const newPads = [...prev];
+            const updatedPad = {
+              ...newPads[index],
+              name: file.name.substring(0, 12),
+              buffer: audioBuffer,
+              blob: file, 
+              url: URL.createObjectURL(file),
+            };
+            newPads[index] = updatedPad;
+            savePadToDb(updatedPad);
+            return newPads;
+          });
+        } catch (err) {
+          console.error("Error", err);
+          alert("Load failed.");
+        }
+      };
+
+      useEffect(() => {
+        const handleKeyDown = (e) => {
+          if (!isReady) return;
+          if (e.target.tagName === 'INPUT') return;
+          const index = KEY_MAP.indexOf(e.key);
+          if (index !== -1) triggerPad(index);
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+      }, [isReady, triggerPad]);
+
+      const updatePadSettings = (id, newSettings) => {
+        setPads(prev => prev.map(p => p.id === id ? { ...p, settings: { ...p.settings, ...newSettings } } : p));
+      };
+      
+      const handleEditorClose = (padId) => {
+        setEditingPadId(null);
+        const pad = pads.find(p => p.id === padId);
+        if (pad) savePadToDb(pad);
+      };
+
+      if (!isReady) {
+        return (
+          <div className="flex flex-col items-center justify-center h-screen bg-slate-900 text-white">
+            <h1 className="text-4xl font-bold mb-4 tracking-tighter">T's Audio Player</h1>
+            <p className="mb-8 text-slate-400">Web Audio Sampler & Editor</p>
+            <button 
+              onClick={initAudio} 
+              disabled={isLoadingData || isProcessing}
+              className={`px-8 py-4 rounded-full font-bold text-xl shadow-[0_0_20px_rgba(37,99,235,0.5)] transition-all transform hover:scale-105 disabled:opacity-50 disabled:scale-100 disabled:cursor-wait ${isProcessing ? 'bg-amber-600' : 'bg-blue-600 hover:bg-blue-500'}`}
+            >
+              {isLoadingData ? 'LOADING DATA...' : isProcessing ? 'PROCESSING...' : 'START APP'}
+            </button>
+            <p className="mt-4 text-xs text-slate-500">Tap to initialize Audio Engine</p>
+          </div>
+        );
+      }
+
+      return (
+        <div className="flex flex-col h-screen bg-slate-900 text-slate-100 overflow-hidden select-none">
+          <header className="flex flex-col gap-4 px-6 py-4 bg-slate-800 border-b border-slate-700 shadow-md z-10">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Music className="text-blue-400" />
+                <h1 className="text-xl font-bold tracking-tight">T's Audio Player</h1>
+              </div>
+              
+              {/* Project Controls */}
+              <div className="flex items-center gap-2">
+                 <button 
+                   onClick={handleExportProject} 
+                   disabled={isProcessing}
+                   className="flex items-center gap-1 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-bold transition-colors disabled:opacity-50"
+                   title="Save Project to File"
+                 >
+                   <Download size={14} /> <span className="hidden sm:inline">SAVE PROJECT</span>
+                 </button>
+                 <button 
+                   onClick={() => projectInputRef.current.click()} 
+                   disabled={isProcessing}
+                   className="flex items-center gap-1 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-bold transition-colors disabled:opacity-50"
+                   title="Load Project from File"
+                 >
+                   <FolderOpen size={14} /> <span className="hidden sm:inline">LOAD PROJECT</span>
+                 </button>
+                 <input type="file" accept=".tsp,.zip" ref={projectInputRef} className="hidden" onChange={handleImportProject} />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-4 bg-slate-900/50 p-2 rounded-lg border border-slate-700/50">
+               <div className="flex items-center gap-2 mr-2">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Mode</span>
+               </div>
+               <div className="flex bg-slate-800 rounded-md p-1 border border-slate-700">
+                 <button onClick={() => setTransitionMode('CUT')} className={`flex items-center gap-1 px-3 sm:px-4 py-1.5 rounded text-sm font-medium transition-all ${transitionMode === 'CUT' ? 'bg-red-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}>
+                   <Zap size={14} /> CUT
+                 </button>
+                 <button onClick={() => setTransitionMode('FADE')} className={`flex items-center gap-1 px-3 sm:px-4 py-1.5 rounded text-sm font-medium transition-all ${transitionMode === 'FADE' ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}>
+                   <Layers size={14} /> FADE
+                 </button>
+               </div>
+               {transitionMode === 'FADE' && (
+                 <div className="flex items-center gap-2 ml-0 sm:ml-2">
+                    <div className="flex bg-slate-800 rounded-md border border-slate-700 overflow-hidden">
+                      {FADE_DURATIONS.map(dur => (
+                        <button key={dur} onClick={() => setCrossfadeDuration(dur)} className={`px-2 sm:px-3 py-1.5 text-xs font-bold border-r border-slate-700 last:border-0 transition-colors ${crossfadeDuration === dur ? 'bg-blue-500/20 text-blue-300' : 'text-slate-500 hover:bg-slate-700 hover:text-slate-300'}`}>
+                          {dur}s
+                        </button>
+                      ))}
+                    </div>
+                 </div>
+               )}
+            </div>
+          </header>
+
+          <main className="flex-1 p-2 sm:p-4 overflow-y-auto">
+            {isProcessing && (
+              <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                 <div className="text-xl font-bold animate-pulse">Processing Project File...</div>
+              </div>
+            )}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-4 h-full max-h-[800px] mx-auto max-w-6xl">
+              {pads.map((pad, idx) => (
+                <Pad key={pad.id} pad={pad} isPlaying={!!playingPads[pad.id]} triggerPlay={() => triggerPad(pad.id)} openEditor={() => setEditingPadId(pad.id)} onFileSelect={() => fileInputRefs.current[idx].click()} />
+              ))}
+            </div>
+          </main>
+          {pads.map((pad, idx) => (
+            <input key={pad.id} type="file" accept="audio/*" className="hidden" ref={el => fileInputRefs.current[idx] = el} onChange={(e) => handleFileUpload(e, idx)} />
+          ))}
+          {editingPadId !== null && (
+            <EditorModal pad={pads.find(p => p.id === editingPadId)} onClose={() => handleEditorClose(editingPadId)} onUpdate={(settings) => updatePadSettings(editingPadId, settings)} />
+          )}
+        </div>
+      );
+    }
+
+    const Pad = ({ pad, isPlaying, triggerPlay, openEditor, onFileSelect }) => {
+      const handlePadClick = (e) => {
+        if (e.target.closest('.settings-btn')) return;
+        if (!pad.buffer && !pad.blob) onFileSelect(); 
+        else triggerPlay();
+      };
+      
+      const hasAudio = !!pad.buffer || !!pad.blob;
+      
+      return (
+        <div className={`relative rounded-xl border-b-4 transition-all active:border-b-0 active:translate-y-1 touch-manipulation cursor-pointer group ${hasAudio ? pad.color : 'bg-slate-700 border-slate-600'} ${hasAudio ? 'border-black/20' : ''} ${isPlaying ? 'brightness-125 scale-[0.98] border-b-0 translate-y-1 ring-4 ring-white/50' : ''}`} onPointerDown={handlePadClick}>
+          {hasAudio && (
+            <button onClick={(e) => { e.stopPropagation(); openEditor(); }} className="settings-btn absolute top-2 right-2 p-2 bg-black/20 hover:bg-black/40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+              <Settings size={16} className="text-white" />
+            </button>
+          )}
+          <div className="flex flex-col items-center justify-center h-full p-4 pointer-events-none">
+            <span className="absolute top-2 left-3 font-mono text-2xl font-bold opacity-50 text-black/40">{pad.keyTrigger}</span>
+            {!hasAudio ? (
+              <div className="flex flex-col items-center text-slate-400">
+                <Upload size={32} className="mb-2 opacity-50" /><span className="text-sm font-medium">Load Audio</span>
+              </div>
+            ) : (
+              <div className="text-center">
+                 <div className="font-bold text-lg text-white drop-shadow-md break-all line-clamp-2">{pad.name}</div>
+                 {isPlaying && <div className="absolute bottom-4 left-0 right-0 flex justify-center"><div className="animate-pulse bg-white/30 rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-wider">Playing</div></div>}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    const EditorModal = ({ pad, onClose, onUpdate }) => {
+      const canvasRef = useRef(null);
+      const [zoomX, setZoomX] = useState(1);
+      const [zoomY, setZoomY] = useState(1);
+      const [scrollPos, setScrollPos] = useState(0);
+      const [draggingHandle, setDraggingHandle] = useState(null);
+      const [hoverHandle, setHoverHandle] = useState(null);
+
+      const getScreenX = useCallback((normalizedValue, width, totalSamples) => {
+         const viewSizeSamples = Math.floor(totalSamples / zoomX);
+         const maxScrollSamples = totalSamples - viewSizeSamples;
+         const startSample = Math.floor(scrollPos * maxScrollSamples);
+         const globalSample = normalizedValue * totalSamples;
+         return ((globalSample - startSample) / viewSizeSamples) * width;
+      }, [zoomX, scrollPos]);
+
+      const getNormalizedFromScreenX = useCallback((screenX, width, totalSamples) => {
+        const viewSizeSamples = Math.floor(totalSamples / zoomX);
+        const maxScrollSamples = totalSamples - viewSizeSamples;
+        const startSample = Math.floor(scrollPos * maxScrollSamples);
+        const relativeSample = (screenX / width) * viewSizeSamples;
+        const globalSample = startSample + relativeSample;
+        return Math.max(0, Math.min(1, globalSample / totalSamples));
+      }, [zoomX, scrollPos]);
+
+      const handlePointerDown = (e) => {
+        if (!canvasRef.current || !pad.buffer) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const width = rect.width;
+        const totalSamples = pad.buffer.length;
+        const startX = getScreenX(pad.settings.start, width, totalSamples);
+        const endX = getScreenX(pad.settings.end, width, totalSamples);
+        const threshold = 20;
+        if (Math.abs(x - startX) < threshold) { setDraggingHandle('start'); e.target.setPointerCapture(e.pointerId); }
+        else if (Math.abs(x - endX) < threshold) { setDraggingHandle('end'); e.target.setPointerCapture(e.pointerId); }
+      };
+
+      const handlePointerMove = (e) => {
+        if (!canvasRef.current || !pad.buffer) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const width = rect.width;
+        const totalSamples = pad.buffer.length;
+        if (draggingHandle) {
+          const newVal = getNormalizedFromScreenX(x, width, totalSamples);
+          if (draggingHandle === 'start') { if (newVal < pad.settings.end) onUpdate({ start: newVal }); }
+          else { if (newVal > pad.settings.start) onUpdate({ end: newVal }); }
+          return;
+        }
+        const startX = getScreenX(pad.settings.start, width, totalSamples);
+        const endX = getScreenX(pad.settings.end, width, totalSamples);
+        const threshold = 20;
+        if (Math.abs(x - startX) < threshold) setHoverHandle('start');
+        else if (Math.abs(x - endX) < threshold) setHoverHandle('end');
+        else setHoverHandle(null);
+      };
+
+      const handlePointerUp = (e) => {
+        setDraggingHandle(null);
+        if(e.target) e.target.releasePointerCapture(e.pointerId);
+      };
+
+      useEffect(() => {
+        if (!pad.buffer || !canvasRef.current) return;
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        const width = canvas.width;
+        const height = canvas.height;
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = '#1e293b'; ctx.fillRect(0, 0, width, height);
+        const data = pad.buffer.getChannelData(0);
+        const totalSamples = data.length;
+        const viewSizeSamples = Math.floor(totalSamples / zoomX);
+        const maxScrollSamples = totalSamples - viewSizeSamples;
+        const startSample = Math.floor(scrollPos * maxScrollSamples);
+        const endSample = startSample + viewSizeSamples;
+        const step = Math.ceil(viewSizeSamples / width);
+        const amp = (height / 2);
+        ctx.fillStyle = '#60a5fa'; ctx.beginPath();
+        for (let i = 0; i < width; i++) {
+          let min = 1.0, max = -1.0;
+          const sampleIndexStart = startSample + (i * step);
+          for (let j = 0; j < step; j++) {
+            const idx = sampleIndexStart + j;
+            if (idx < endSample && idx < totalSamples) {
+              let datum = data[idx] * zoomY;
+              if (datum < -1) datum = -1; if (datum > 1) datum = 1;
+              if (datum < min) min = datum; if (datum > max) max = datum;
+            }
+          }
+          if (min > max) { min = 0; max = 0; }
+          const y1 = (1 + min) * amp; const y2 = (1 + max) * amp;
+          ctx.fillRect(i, y1, 1, Math.max(1, y2 - y1));
+        }
+        const startX = getScreenX(pad.settings.start, width, totalSamples);
+        const endX = getScreenX(pad.settings.end, width, totalSamples);
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        if (startX > 0) ctx.fillRect(0, 0, Math.min(width, startX), height);
+        if (endX < width) ctx.fillRect(Math.max(0, endX), 0, width - Math.max(0, endX), height);
+        const drawLine = (x, color, isHovered) => {
+          if (x < -5 || x > width + 5) return;
+          ctx.strokeStyle = color; ctx.lineWidth = isHovered ? 4 : 2;
+          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+          ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, 10, isHovered ? 6 : 4, 0, Math.PI * 2); ctx.fill();
+        };
+        drawLine(startX, '#22c55e', draggingHandle === 'start' || hoverHandle === 'start');
+        drawLine(endX, '#ef4444', draggingHandle === 'end' || hoverHandle === 'end');
+      }, [pad, zoomX, zoomY, scrollPos, draggingHandle, hoverHandle, getScreenX]);
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+          <div className="bg-slate-800 rounded-2xl w-full max-w-4xl overflow-hidden shadow-2xl border border-slate-700 flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between p-4 border-b border-slate-700 bg-slate-900/50 flex-shrink-0">
+              <h2 className="text-lg font-bold flex items-center gap-2"><Scissors size={18} /> Edit: {pad.name}</h2>
+              <button onClick={onClose} className="p-2 hover:bg-slate-700 rounded-full"><X size={20} /></button>
+            </div>
+            <div className="p-6 space-y-6 overflow-y-auto flex-1">
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-700/30 p-2 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-400 uppercase flex items-center gap-1"><ArrowLeftRight size={12} /> Time (X)</span>
+                    <button onClick={() => setZoomX(prev => Math.max(1, prev - 1))} className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 disabled:opacity-50" disabled={zoomX <= 1}><ZoomOut size={16} /></button>
+                    <span className="text-xs font-mono w-8 text-center">{zoomX}x</span>
+                    <button onClick={() => setZoomX(prev => Math.min(50, prev + 1))} className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300"><ZoomIn size={16} /></button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                     <span className="text-xs font-bold text-slate-400 uppercase flex items-center gap-1"><ArrowUpDown size={12} /> Amp (Y)</span>
+                    <button onClick={() => setZoomY(prev => Math.max(1, prev - 0.5))} className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 disabled:opacity-50" disabled={zoomY <= 1}><ZoomOut size={16} /></button>
+                     <span className="text-xs font-mono w-10 text-center">{zoomY.toFixed(1)}x</span>
+                    <button onClick={() => setZoomY(prev => Math.min(10, prev + 0.5))} className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300"><ZoomIn size={16} /></button>
+                  </div>
+                  <button onClick={() => { setZoomX(1); setZoomY(1); setScrollPos(0); }} className="ml-auto text-xs flex items-center gap-1 px-3 py-1.5 bg-slate-600 hover:bg-slate-500 rounded text-white"><Maximize size={12} /> Reset</button>
+                </div>
+                <div className="relative h-48 w-full rounded-lg overflow-hidden ring-1 ring-slate-600 bg-slate-900 shadow-inner group">
+                  <canvas ref={canvasRef} width={800} height={192} className={`w-full h-full object-cover touch-none ${hoverHandle ? 'cursor-ew-resize' : 'cursor-default'}`} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp} />
+                  {zoomX === 1 && !draggingHandle && !hoverHandle && (<div className="absolute bottom-2 right-2 text-[10px] text-slate-500 pointer-events-none opacity-50">Drag green/red lines to trim</div>)}
+                </div>
+                <div className={`transition-opacity duration-200 ${zoomX > 1 ? 'opacity-100' : 'opacity-30 pointer-events-none'}`}>
+                  <input type="range" min="0" max="1" step="0.001" value={scrollPos} onChange={(e) => setScrollPos(parseFloat(e.target.value))} className="w-full accent-slate-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-slate-700/50">
+                <div className="space-y-4 p-4 bg-slate-700/30 rounded-lg">
+                  <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">Trim Range</h3>
+                  <div className="space-y-1"><div className="flex justify-between text-xs"><span className="text-green-400 font-bold">Start Point</span><span>{(pad.settings.start * 100).toFixed(1)}%</span></div><input type="range" min="0" max="1" step="0.001" value={pad.settings.start} onChange={(e) => { const val = parseFloat(e.target.value); if (val < pad.settings.end) onUpdate({ start: val }); }} className="w-full accent-green-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" /></div>
+                  <div className="space-y-1"><div className="flex justify-between text-xs"><span className="text-red-400 font-bold">End Point</span><span>{(pad.settings.end * 100).toFixed(1)}%</span></div><input type="range" min="0" max="1" step="0.001" value={pad.settings.end} onChange={(e) => { const val = parseFloat(e.target.value); if (val > pad.settings.start) onUpdate({ end: val }); }} className="w-full accent-red-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" /></div>
+                </div>
+                <div className="space-y-4 p-4 bg-slate-700/30 rounded-lg">
+                  <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">Effects</h3>
+                  <div className="flex gap-4">
+                    <div className="flex-1 space-y-1"><div className="flex justify-between text-xs"><span>Fade In</span><span>{pad.settings.fadeIn}s</span></div><input type="range" min="0" max="2" step="0.1" value={pad.settings.fadeIn} onChange={(e) => onUpdate({ fadeIn: parseFloat(e.target.value) })} className="w-full accent-blue-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" /></div>
+                    <div className="flex-1 space-y-1"><div className="flex justify-between text-xs"><span>Fade Out</span><span>{pad.settings.fadeOut}s</span></div><input type="range" min="0" max="2" step="0.1" value={pad.settings.fadeOut} onChange={(e) => onUpdate({ fadeOut: parseFloat(e.target.value) })} className="w-full accent-blue-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" /></div>
+                  </div>
+                  <div className="space-y-1 pt-2 border-t border-slate-600/50">
+                     <div className="flex justify-between text-xs items-center"><div className="flex items-center gap-2"><Volume2 size={14} /> Volume</div><span>{(pad.settings.volume * 100).toFixed(0)}%</span></div>
+                    <input type="range" min="0" max="3.0" step="0.1" value={pad.settings.volume} onChange={(e) => onUpdate({ volume: parseFloat(e.target.value) })} className="w-full accent-yellow-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" />
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="p-4 bg-slate-900/50 text-center flex-shrink-0">
+              <button onClick={onClose} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-md font-semibold text-sm transition-colors shadow-lg">Done Editing</button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<SoundBoardApp />);
+  </script>
+</body>
+</html>
