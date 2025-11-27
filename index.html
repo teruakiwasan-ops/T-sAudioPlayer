@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
@@ -17,10 +17,11 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
   <style>
-    /* Prevent pull-to-refresh on mobile */
+    /* Prevent pull-to-refresh on mobile & enable hardware acceleration */
     body {
       overscroll-behavior-y: contain;
       touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
     }
     /* Custom scrollbar for webkit */
     ::-webkit-scrollbar {
@@ -66,7 +67,8 @@
     const FolderOpen = (p) => <Icon {...p}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></Icon>;
     const Download = (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></Icon>;
 
-    // --- Constants & Helper Functions ---
+
+    // --- Constants ---
     const PAD_COUNT = 10;
     const KEY_MAP = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
     const COLORS = [
@@ -167,7 +169,6 @@
             pads: []
           };
 
-          // Process each pad
           pads.forEach(pad => {
             const padMeta = {
               id: pad.id,
@@ -188,10 +189,8 @@
 
           zip.file("project.json", JSON.stringify(metadata));
 
-          // Generate zip
           const content = await zip.generateAsync({ type: "blob" });
           
-          // Trigger download
           const url = URL.createObjectURL(content);
           const link = document.createElement("a");
           link.href = url;
@@ -223,16 +222,13 @@
         try {
           const zip = await JSZip.loadAsync(file);
           
-          // Read metadata
           if (!zip.file("project.json")) throw new Error("Invalid project file");
           const metaStr = await zip.file("project.json").async("string");
           const metadata = JSON.parse(metaStr);
 
-          // Restore Global Settings
           if (metadata.transitionMode) setTransitionMode(metadata.transitionMode);
           if (metadata.crossfadeDuration) setCrossfadeDuration(metadata.crossfadeDuration);
 
-          // Restore Pads
           const newPads = generatePads();
           const ctx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
           if (!audioCtx) setAudioCtx(ctx);
@@ -255,10 +251,8 @@
                 newPads[index].buffer = audioBuffer;
                 newPads[index].url = URL.createObjectURL(audioBlob);
                 
-                // Save to IndexedDB immediately
                 await savePadToDb(newPads[index]); 
               } else {
-                 // Clear DB for empty pads
                  await idbKeyval.del(`pad_${index}`);
               }
             }
@@ -274,7 +268,7 @@
           alert("Failed to load project file. Format might be invalid.");
         } finally {
           setIsProcessing(false);
-          e.target.value = null; // Reset input
+          e.target.value = null; 
         }
       };
 
@@ -333,27 +327,37 @@
       const triggerPad = useCallback((padId) => {
         const pad = pads[padId];
         if (!pad.buffer || !audioCtx) return;
+
         const now = audioCtx.currentTime;
+
+        // 1. Toggle Off if same pad
         if (activeAudioNodes.current[padId]) {
           stopPad(padId, transitionMode, crossfadeDuration);
           return;
         }
+
+        // 2. Exclusive Playback - Stop others
         Object.keys(activeAudioNodes.current).forEach((activeId) => {
           const id = parseInt(activeId);
           if (id !== padId) {
             stopPad(id, transitionMode, crossfadeDuration);
           }
         });
+
+        // 3. Play
         const source = audioCtx.createBufferSource();
         source.buffer = pad.buffer;
         const gainNode = audioCtx.createGain();
         source.connect(gainNode);
         gainNode.connect(audioCtx.destination);
+
         const duration = pad.buffer.duration;
         const startTime = pad.settings.start * duration;
         const endTime = pad.settings.end * duration;
         const playDuration = Math.max(0, endTime - startTime);
+
         gainNode.gain.value = pad.settings.volume;
+
         if (pad.settings.fadeIn > 0) {
           gainNode.gain.setValueAtTime(0, now);
           gainNode.gain.linearRampToValueAtTime(pad.settings.volume, now + Math.min(pad.settings.fadeIn, playDuration));
@@ -363,9 +367,11 @@
           gainNode.gain.setValueAtTime(pad.settings.volume, Math.max(now, fadeOutStart));
           gainNode.gain.linearRampToValueAtTime(0, now + playDuration);
         }
+
         source.start(now, startTime, playDuration);
         activeAudioNodes.current[padId] = { source, gain: gainNode, isStopping: false };
         setPlayingPads(prev => ({ ...prev, [padId]: true }));
+
         source.onended = () => {
           if (activeAudioNodes.current[padId]?.source === source) {
             delete activeAudioNodes.current[padId];
@@ -376,6 +382,7 @@
             });
           }
         };
+
       }, [audioCtx, pads, transitionMode, crossfadeDuration, stopPad]);
 
       const handleFileUpload = async (e, index) => {
@@ -384,6 +391,7 @@
         try {
           const arrayBuffer = await file.arrayBuffer();
           const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+          
           setPads((prev) => {
             const newPads = [...prev];
             const updatedPad = {
@@ -394,7 +402,9 @@
               url: URL.createObjectURL(file),
             };
             newPads[index] = updatedPad;
+            
             savePadToDb(updatedPad);
+            
             return newPads;
           });
         } catch (err) {
@@ -458,7 +468,7 @@
                    className="flex items-center gap-1 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-bold transition-colors disabled:opacity-50"
                    title="Save Project to File"
                  >
-                   <Download size={14} /> <span className="hidden sm:inline">SAVE PROJECT</span>
+                   <Download size={14} /> <span className="hidden sm:inline">SAVE</span>
                  </button>
                  <button 
                    onClick={() => projectInputRef.current.click()} 
@@ -466,7 +476,7 @@
                    className="flex items-center gap-1 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-bold transition-colors disabled:opacity-50"
                    title="Load Project from File"
                  >
-                   <FolderOpen size={14} /> <span className="hidden sm:inline">LOAD PROJECT</span>
+                   <FolderOpen size={14} /> <span className="hidden sm:inline">LOAD</span>
                  </button>
                  <input type="file" accept=".tsp,.zip" ref={projectInputRef} className="hidden" onChange={handleImportProject} />
               </div>
@@ -501,7 +511,7 @@
           <main className="flex-1 p-2 sm:p-4 overflow-y-auto">
             {isProcessing && (
               <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-                 <div className="text-xl font-bold animate-pulse">Processing Project File...</div>
+                 <div className="text-xl font-bold animate-pulse">Processing...</div>
               </div>
             )}
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-4 h-full max-h-[800px] mx-auto max-w-6xl">
@@ -511,7 +521,7 @@
             </div>
           </main>
           {pads.map((pad, idx) => (
-            <input key={pad.id} type="file" accept="audio/*" className="hidden" ref={el => fileInputRefs.current[idx] = el} onChange={(e) => handleFileUpload(e, idx)} />
+            <input key={pad.id} type="file" accept="audio/*,.wav,.mp3,.m4a,.aif,.aiff" className="hidden" ref={el => fileInputRefs.current[idx] = el} onChange={(e) => handleFileUpload(e, idx)} />
           ))}
           {editingPadId !== null && (
             <EditorModal pad={pads.find(p => p.id === editingPadId)} onClose={() => handleEditorClose(editingPadId)} onUpdate={(settings) => updatePadSettings(editingPadId, settings)} />
@@ -521,31 +531,75 @@
     }
 
     const Pad = ({ pad, isPlaying, triggerPlay, openEditor, onFileSelect }) => {
-      const handlePadClick = (e) => {
-        if (e.target.closest('.settings-btn')) return;
-        if (!pad.buffer && !pad.blob) onFileSelect(); 
-        else triggerPlay();
-      };
-      
+      // Determine if this pad is ready to play
       const hasAudio = !!pad.buffer || !!pad.blob;
       
+      const handleInteraction = (e) => {
+        // Prevent event propagation if clicking settings
+        if (e.target.closest('.settings-btn')) return;
+
+        // Separate logic for iPhone file upload fix:
+        // If NO audio, we need to trigger file input.
+        // File inputs on iOS MUST be triggered by a CLICK event, not pointerdown.
+        if (!hasAudio) {
+           if (e.type === 'click') {
+             onFileSelect();
+           }
+        } else {
+           // If HAS audio, we want instant playback.
+           // Pointerdown is faster than click for sound triggering.
+           if (e.type === 'pointerdown') {
+             triggerPlay();
+           }
+        }
+      };
+
       return (
-        <div className={`relative rounded-xl border-b-4 transition-all active:border-b-0 active:translate-y-1 touch-manipulation cursor-pointer group ${hasAudio ? pad.color : 'bg-slate-700 border-slate-600'} ${hasAudio ? 'border-black/20' : ''} ${isPlaying ? 'brightness-125 scale-[0.98] border-b-0 translate-y-1 ring-4 ring-white/50' : ''}`} onPointerDown={handlePadClick}>
+        <div 
+          className={`
+            relative rounded-xl border-b-4 transition-all active:border-b-0 active:translate-y-1 touch-manipulation cursor-pointer group
+            ${hasAudio ? pad.color : 'bg-slate-700 border-slate-600'}
+            ${hasAudio ? 'border-black/20' : ''}
+            ${isPlaying ? 'brightness-125 scale-[0.98] border-b-0 translate-y-1 ring-4 ring-white/50' : ''}
+          `}
+          onPointerDown={handleInteraction}
+          onClick={handleInteraction}
+        >
           {hasAudio && (
-            <button onClick={(e) => { e.stopPropagation(); openEditor(); }} className="settings-btn absolute top-2 right-2 p-2 bg-black/20 hover:bg-black/40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                openEditor();
+              }}
+              className="settings-btn absolute top-2 right-2 p-2 bg-black/20 hover:bg-black/40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+            >
               <Settings size={16} className="text-white" />
             </button>
           )}
+
+          {/* Content */}
           <div className="flex flex-col items-center justify-center h-full p-4 pointer-events-none">
-            <span className="absolute top-2 left-3 font-mono text-2xl font-bold opacity-50 text-black/40">{pad.keyTrigger}</span>
+            <span className="absolute top-2 left-3 font-mono text-2xl font-bold opacity-50 text-black/40">
+              {pad.keyTrigger}
+            </span>
+            
             {!hasAudio ? (
               <div className="flex flex-col items-center text-slate-400">
-                <Upload size={32} className="mb-2 opacity-50" /><span className="text-sm font-medium">Load Audio</span>
+                <Upload size={32} className="mb-2 opacity-50" />
+                <span className="text-sm font-medium">Load Audio</span>
               </div>
             ) : (
               <div className="text-center">
-                 <div className="font-bold text-lg text-white drop-shadow-md break-all line-clamp-2">{pad.name}</div>
-                 {isPlaying && <div className="absolute bottom-4 left-0 right-0 flex justify-center"><div className="animate-pulse bg-white/30 rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-wider">Playing</div></div>}
+                 <div className="font-bold text-lg text-white drop-shadow-md break-all line-clamp-2">
+                   {pad.name}
+                 </div>
+                 {isPlaying && (
+                   <div className="absolute bottom-4 left-0 right-0 flex justify-center">
+                     <div className="animate-pulse bg-white/30 rounded-full px-2 py-0.5 text-xs font-bold uppercase tracking-wider">
+                       Playing
+                     </div>
+                   </div>
+                 )}
               </div>
             )}
           </div>
@@ -555,40 +609,58 @@
 
     const EditorModal = ({ pad, onClose, onUpdate }) => {
       const canvasRef = useRef(null);
+      
+      // View State
       const [zoomX, setZoomX] = useState(1);
       const [zoomY, setZoomY] = useState(1);
-      const [scrollPos, setScrollPos] = useState(0);
-      const [draggingHandle, setDraggingHandle] = useState(null);
-      const [hoverHandle, setHoverHandle] = useState(null);
+      const [scrollPos, setScrollPos] = useState(0); 
+      
+      // Dragging State
+      const [draggingHandle, setDraggingHandle] = useState(null); // 'start' | 'end' | null
+      const [hoverHandle, setHoverHandle] = useState(null); // 'start' | 'end' | null
 
+      // Helper: Get visual position (pixel x) from normalized value (0-1)
       const getScreenX = useCallback((normalizedValue, width, totalSamples) => {
          const viewSizeSamples = Math.floor(totalSamples / zoomX);
          const maxScrollSamples = totalSamples - viewSizeSamples;
          const startSample = Math.floor(scrollPos * maxScrollSamples);
+         
          const globalSample = normalizedValue * totalSamples;
          return ((globalSample - startSample) / viewSizeSamples) * width;
       }, [zoomX, scrollPos]);
 
+      // Helper: Get normalized value (0-1) from visual position (pixel x)
       const getNormalizedFromScreenX = useCallback((screenX, width, totalSamples) => {
         const viewSizeSamples = Math.floor(totalSamples / zoomX);
         const maxScrollSamples = totalSamples - viewSizeSamples;
         const startSample = Math.floor(scrollPos * maxScrollSamples);
+
         const relativeSample = (screenX / width) * viewSizeSamples;
         const globalSample = startSample + relativeSample;
         return Math.max(0, Math.min(1, globalSample / totalSamples));
       }, [zoomX, scrollPos]);
 
+      // Handle Canvas Interaction
       const handlePointerDown = (e) => {
         if (!canvasRef.current || !pad.buffer) return;
         const rect = canvasRef.current.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const width = rect.width;
         const totalSamples = pad.buffer.length;
+
+        // Check distance to handles
         const startX = getScreenX(pad.settings.start, width, totalSamples);
         const endX = getScreenX(pad.settings.end, width, totalSamples);
-        const threshold = 20;
-        if (Math.abs(x - startX) < threshold) { setDraggingHandle('start'); e.target.setPointerCapture(e.pointerId); }
-        else if (Math.abs(x - endX) < threshold) { setDraggingHandle('end'); e.target.setPointerCapture(e.pointerId); }
+
+        const threshold = 20; // pixels
+
+        if (Math.abs(x - startX) < threshold) {
+          setDraggingHandle('start');
+          e.target.setPointerCapture(e.pointerId);
+        } else if (Math.abs(x - endX) < threshold) {
+          setDraggingHandle('end');
+          e.target.setPointerCapture(e.pointerId);
+        }
       };
 
       const handlePointerMove = (e) => {
@@ -597,18 +669,30 @@
         const x = e.clientX - rect.left;
         const width = rect.width;
         const totalSamples = pad.buffer.length;
+
+        // 1. Update dragging
         if (draggingHandle) {
           const newVal = getNormalizedFromScreenX(x, width, totalSamples);
-          if (draggingHandle === 'start') { if (newVal < pad.settings.end) onUpdate({ start: newVal }); }
-          else { if (newVal > pad.settings.start) onUpdate({ end: newVal }); }
+          if (draggingHandle === 'start') {
+            if (newVal < pad.settings.end) onUpdate({ start: newVal });
+          } else {
+            if (newVal > pad.settings.start) onUpdate({ end: newVal });
+          }
           return;
         }
+
+        // 2. Update Hover Cursor
         const startX = getScreenX(pad.settings.start, width, totalSamples);
         const endX = getScreenX(pad.settings.end, width, totalSamples);
         const threshold = 20;
-        if (Math.abs(x - startX) < threshold) setHoverHandle('start');
-        else if (Math.abs(x - endX) < threshold) setHoverHandle('end');
-        else setHoverHandle(null);
+
+        if (Math.abs(x - startX) < threshold) {
+          setHoverHandle('start');
+        } else if (Math.abs(x - endX) < threshold) {
+          setHoverHandle('end');
+        } else {
+          setHoverHandle(null);
+        }
       };
 
       const handlePointerUp = (e) => {
@@ -616,107 +700,291 @@
         if(e.target) e.target.releasePointerCapture(e.pointerId);
       };
 
+      // Draw Waveform
       useEffect(() => {
         if (!pad.buffer || !canvasRef.current) return;
         const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
         const width = canvas.width;
         const height = canvas.height;
+        
         ctx.clearRect(0, 0, width, height);
-        ctx.fillStyle = '#1e293b'; ctx.fillRect(0, 0, width, height);
+        ctx.fillStyle = '#1e293b'; 
+        ctx.fillRect(0, 0, width, height);
+
         const data = pad.buffer.getChannelData(0);
         const totalSamples = data.length;
+
         const viewSizeSamples = Math.floor(totalSamples / zoomX);
         const maxScrollSamples = totalSamples - viewSizeSamples;
         const startSample = Math.floor(scrollPos * maxScrollSamples);
         const endSample = startSample + viewSizeSamples;
+
         const step = Math.ceil(viewSizeSamples / width);
         const amp = (height / 2);
-        ctx.fillStyle = '#60a5fa'; ctx.beginPath();
+
+        ctx.fillStyle = '#60a5fa'; 
+        ctx.beginPath();
+        
         for (let i = 0; i < width; i++) {
           let min = 1.0, max = -1.0;
           const sampleIndexStart = startSample + (i * step);
+
           for (let j = 0; j < step; j++) {
             const idx = sampleIndexStart + j;
             if (idx < endSample && idx < totalSamples) {
               let datum = data[idx] * zoomY;
-              if (datum < -1) datum = -1; if (datum > 1) datum = 1;
-              if (datum < min) min = datum; if (datum > max) max = datum;
+              if (datum < -1) datum = -1;
+              if (datum > 1) datum = 1;
+              if (datum < min) min = datum;
+              if (datum > max) max = datum;
             }
           }
           if (min > max) { min = 0; max = 0; }
-          const y1 = (1 + min) * amp; const y2 = (1 + max) * amp;
+          const y1 = (1 + min) * amp;
+          const y2 = (1 + max) * amp;
           ctx.fillRect(i, y1, 1, Math.max(1, y2 - y1));
         }
+
+        // --- Draw Start/End Markers ---
         const startX = getScreenX(pad.settings.start, width, totalSamples);
         const endX = getScreenX(pad.settings.end, width, totalSamples);
+
         ctx.fillStyle = 'rgba(0,0,0,0.6)';
+
+        // Masks
         if (startX > 0) ctx.fillRect(0, 0, Math.min(width, startX), height);
         if (endX < width) ctx.fillRect(Math.max(0, endX), 0, width - Math.max(0, endX), height);
+
+        // Lines
         const drawLine = (x, color, isHovered) => {
           if (x < -5 || x > width + 5) return;
-          ctx.strokeStyle = color; ctx.lineWidth = isHovered ? 4 : 2;
-          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
-          ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, 10, isHovered ? 6 : 4, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = color;
+          ctx.lineWidth = isHovered ? 4 : 2; // Thicker if hovered/dragged
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, height);
+          ctx.stroke();
+
+          // Handle Handle (Visual cue)
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(x, 10, isHovered ? 6 : 4, 0, Math.PI * 2);
+          ctx.fill();
         };
-        drawLine(startX, '#22c55e', draggingHandle === 'start' || hoverHandle === 'start');
-        drawLine(endX, '#ef4444', draggingHandle === 'end' || hoverHandle === 'end');
+
+        const isStartActive = draggingHandle === 'start' || hoverHandle === 'start';
+        const isEndActive = draggingHandle === 'end' || hoverHandle === 'end';
+
+        drawLine(startX, '#22c55e', isStartActive);
+        drawLine(endX, '#ef4444', isEndActive);
+
       }, [pad, zoomX, zoomY, scrollPos, draggingHandle, hoverHandle, getScreenX]);
+
 
       return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
           <div className="bg-slate-800 rounded-2xl w-full max-w-4xl overflow-hidden shadow-2xl border border-slate-700 flex flex-col max-h-[90vh]">
+            
+            {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-slate-700 bg-slate-900/50 flex-shrink-0">
-              <h2 className="text-lg font-bold flex items-center gap-2"><Scissors size={18} /> Edit: {pad.name}</h2>
-              <button onClick={onClose} className="p-2 hover:bg-slate-700 rounded-full"><X size={20} /></button>
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <Scissors size={18} /> Edit: {pad.name}
+              </h2>
+              <button onClick={onClose} className="p-2 hover:bg-slate-700 rounded-full">
+                <X size={20} />
+              </button>
             </div>
+
             <div className="p-6 space-y-6 overflow-y-auto flex-1">
+              
+              {/* --- Waveform Section --- */}
               <div className="space-y-2">
+                
+                {/* Toolbar */}
                 <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-700/30 p-2 rounded-lg">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-400 uppercase flex items-center gap-1"><ArrowLeftRight size={12} /> Time (X)</span>
-                    <button onClick={() => setZoomX(prev => Math.max(1, prev - 1))} className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 disabled:opacity-50" disabled={zoomX <= 1}><ZoomOut size={16} /></button>
+                    <span className="text-xs font-bold text-slate-400 uppercase flex items-center gap-1">
+                      <ArrowLeftRight size={12} /> Time (X)
+                    </span>
+                    <button 
+                      onClick={() => setZoomX(prev => Math.max(1, prev - 1))}
+                      className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 disabled:opacity-50"
+                      disabled={zoomX <= 1}
+                    >
+                      <ZoomOut size={16} />
+                    </button>
                     <span className="text-xs font-mono w-8 text-center">{zoomX}x</span>
-                    <button onClick={() => setZoomX(prev => Math.min(50, prev + 1))} className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300"><ZoomIn size={16} /></button>
+                    <button 
+                      onClick={() => setZoomX(prev => Math.min(50, prev + 1))}
+                      className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300"
+                    >
+                      <ZoomIn size={16} />
+                    </button>
                   </div>
+
                   <div className="flex items-center gap-2">
-                     <span className="text-xs font-bold text-slate-400 uppercase flex items-center gap-1"><ArrowUpDown size={12} /> Amp (Y)</span>
-                    <button onClick={() => setZoomY(prev => Math.max(1, prev - 0.5))} className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 disabled:opacity-50" disabled={zoomY <= 1}><ZoomOut size={16} /></button>
+                     <span className="text-xs font-bold text-slate-400 uppercase flex items-center gap-1">
+                      <ArrowUpDown size={12} /> Amp (Y)
+                    </span>
+                    <button 
+                      onClick={() => setZoomY(prev => Math.max(1, prev - 0.5))}
+                      className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 disabled:opacity-50"
+                      disabled={zoomY <= 1}
+                    >
+                      <ZoomOut size={16} />
+                    </button>
                      <span className="text-xs font-mono w-10 text-center">{zoomY.toFixed(1)}x</span>
-                    <button onClick={() => setZoomY(prev => Math.min(10, prev + 0.5))} className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300"><ZoomIn size={16} /></button>
+                    <button 
+                      onClick={() => setZoomY(prev => Math.min(10, prev + 0.5))}
+                      className="p-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300"
+                    >
+                      <ZoomIn size={16} />
+                    </button>
                   </div>
-                  <button onClick={() => { setZoomX(1); setZoomY(1); setScrollPos(0); }} className="ml-auto text-xs flex items-center gap-1 px-3 py-1.5 bg-slate-600 hover:bg-slate-500 rounded text-white"><Maximize size={12} /> Reset</button>
+                  
+                  <button 
+                     onClick={() => { setZoomX(1); setZoomY(1); setScrollPos(0); }}
+                     className="ml-auto text-xs flex items-center gap-1 px-3 py-1.5 bg-slate-600 hover:bg-slate-500 rounded text-white"
+                  >
+                    <Maximize size={12} /> Reset
+                  </button>
                 </div>
+
+                {/* Canvas */}
                 <div className="relative h-48 w-full rounded-lg overflow-hidden ring-1 ring-slate-600 bg-slate-900 shadow-inner group">
-                  <canvas ref={canvasRef} width={800} height={192} className={`w-full h-full object-cover touch-none ${hoverHandle ? 'cursor-ew-resize' : 'cursor-default'}`} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp} />
-                  {zoomX === 1 && !draggingHandle && !hoverHandle && (<div className="absolute bottom-2 right-2 text-[10px] text-slate-500 pointer-events-none opacity-50">Drag green/red lines to trim</div>)}
+                  <canvas 
+                    ref={canvasRef} 
+                    width={800} 
+                    height={192} 
+                    className={`w-full h-full object-cover touch-none ${hoverHandle ? 'cursor-ew-resize' : 'cursor-default'}`}
+                    onPointerDown={handlePointerDown}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onPointerLeave={handlePointerUp}
+                  />
+                  {/* Instructions overlay (only if not zooming/dragging) */}
+                  {zoomX === 1 && !draggingHandle && !hoverHandle && (
+                     <div className="absolute bottom-2 right-2 text-[10px] text-slate-500 pointer-events-none opacity-50">
+                        Drag green/red lines to trim
+                     </div>
+                  )}
                 </div>
+
+                {/* Scrollbar (Visible only when zoomed) */}
                 <div className={`transition-opacity duration-200 ${zoomX > 1 ? 'opacity-100' : 'opacity-30 pointer-events-none'}`}>
-                  <input type="range" min="0" max="1" step="0.001" value={scrollPos} onChange={(e) => setScrollPos(parseFloat(e.target.value))} className="w-full accent-slate-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" />
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.001"
+                    value={scrollPos}
+                    onChange={(e) => setScrollPos(parseFloat(e.target.value))}
+                    className="w-full accent-slate-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                  />
                 </div>
               </div>
+
+              {/* --- Controls Grid --- */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-slate-700/50">
+                
+                {/* Trim Controls (Sliders + Values) */}
                 <div className="space-y-4 p-4 bg-slate-700/30 rounded-lg">
                   <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">Trim Range</h3>
-                  <div className="space-y-1"><div className="flex justify-between text-xs"><span className="text-green-400 font-bold">Start Point</span><span>{(pad.settings.start * 100).toFixed(1)}%</span></div><input type="range" min="0" max="1" step="0.001" value={pad.settings.start} onChange={(e) => { const val = parseFloat(e.target.value); if (val < pad.settings.end) onUpdate({ start: val }); }} className="w-full accent-green-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" /></div>
-                  <div className="space-y-1"><div className="flex justify-between text-xs"><span className="text-red-400 font-bold">End Point</span><span>{(pad.settings.end * 100).toFixed(1)}%</span></div><input type="range" min="0" max="1" step="0.001" value={pad.settings.end} onChange={(e) => { const val = parseFloat(e.target.value); if (val > pad.settings.start) onUpdate({ end: val }); }} className="w-full accent-red-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" /></div>
+                  
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-green-400 font-bold">Start Point</span>
+                      <span>{(pad.settings.start * 100).toFixed(1)}%</span>
+                    </div>
+                    <input 
+                      type="range" 
+                      min="0" max="1" step="0.001"
+                      value={pad.settings.start}
+                      onChange={(e) => {
+                         const val = parseFloat(e.target.value);
+                         if (val < pad.settings.end) onUpdate({ start: val });
+                      }}
+                      className="w-full accent-green-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-red-400 font-bold">End Point</span>
+                      <span>{(pad.settings.end * 100).toFixed(1)}%</span>
+                    </div>
+                    <input 
+                      type="range" 
+                      min="0" max="1" step="0.001"
+                      value={pad.settings.end}
+                      onChange={(e) => {
+                         const val = parseFloat(e.target.value);
+                         if (val > pad.settings.start) onUpdate({ end: val });
+                      }}
+                      className="w-full accent-red-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                    />
+                  </div>
                 </div>
+
+                {/* Fade & Volume Controls */}
                 <div className="space-y-4 p-4 bg-slate-700/30 rounded-lg">
                   <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">Effects</h3>
+                  
                   <div className="flex gap-4">
-                    <div className="flex-1 space-y-1"><div className="flex justify-between text-xs"><span>Fade In</span><span>{pad.settings.fadeIn}s</span></div><input type="range" min="0" max="2" step="0.1" value={pad.settings.fadeIn} onChange={(e) => onUpdate({ fadeIn: parseFloat(e.target.value) })} className="w-full accent-blue-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" /></div>
-                    <div className="flex-1 space-y-1"><div className="flex justify-between text-xs"><span>Fade Out</span><span>{pad.settings.fadeOut}s</span></div><input type="range" min="0" max="2" step="0.1" value={pad.settings.fadeOut} onChange={(e) => onUpdate({ fadeOut: parseFloat(e.target.value) })} className="w-full accent-blue-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" /></div>
+                    <div className="flex-1 space-y-1">
+                       <div className="flex justify-between text-xs">
+                        <span>Fade In</span>
+                        <span>{pad.settings.fadeIn}s</span>
+                      </div>
+                      <input 
+                        type="range" min="0" max="2" step="0.1"
+                        value={pad.settings.fadeIn}
+                        onChange={(e) => onUpdate({ fadeIn: parseFloat(e.target.value) })}
+                        className="w-full accent-blue-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                      />
+                    </div>
+                    <div className="flex-1 space-y-1">
+                       <div className="flex justify-between text-xs">
+                        <span>Fade Out</span>
+                        <span>{pad.settings.fadeOut}s</span>
+                      </div>
+                      <input 
+                        type="range" min="0" max="2" step="0.1"
+                        value={pad.settings.fadeOut}
+                        onChange={(e) => onUpdate({ fadeOut: parseFloat(e.target.value) })}
+                        className="w-full accent-blue-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                      />
+                    </div>
                   </div>
+
                   <div className="space-y-1 pt-2 border-t border-slate-600/50">
-                     <div className="flex justify-between text-xs items-center"><div className="flex items-center gap-2"><Volume2 size={14} /> Volume</div><span>{(pad.settings.volume * 100).toFixed(0)}%</span></div>
-                    <input type="range" min="0" max="3.0" step="0.1" value={pad.settings.volume} onChange={(e) => onUpdate({ volume: parseFloat(e.target.value) })} className="w-full accent-yellow-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" />
+                     <div className="flex justify-between text-xs items-center">
+                      <div className="flex items-center gap-2"><Volume2 size={14} /> Volume</div>
+                      <span>{(pad.settings.volume * 100).toFixed(0)}%</span>
+                    </div>
+                    <input 
+                      type="range" min="0" max="3.0" step="0.1"
+                      value={pad.settings.volume}
+                      onChange={(e) => onUpdate({ volume: parseFloat(e.target.value) })}
+                      className="w-full accent-yellow-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+                    />
                   </div>
+
                 </div>
               </div>
             </div>
+
+            {/* Footer */}
             <div className="p-4 bg-slate-900/50 text-center flex-shrink-0">
-              <button onClick={onClose} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-md font-semibold text-sm transition-colors shadow-lg">Done Editing</button>
+              <button 
+                onClick={onClose}
+                className="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-md font-semibold text-sm transition-colors shadow-lg"
+              >
+                Done Editing
+              </button>
             </div>
+
           </div>
         </div>
       );
