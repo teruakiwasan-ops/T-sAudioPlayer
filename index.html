@@ -27,6 +27,15 @@
     ::-webkit-scrollbar-track { background: #0f172a; }
     ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
     ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+    /* Custom Animations */
+    @keyframes flash-red {
+      0%, 100% { box-shadow: inset 0 0 0 0px transparent; }
+      50% { box-shadow: inset 0 0 50px 10px rgba(239, 68, 68, 0.8); background-color: rgba(127, 29, 29, 0.5); }
+    }
+    .animate-flash {
+      animation: flash-red 0.5s infinite;
+    }
   </style>
 </head>
 <body class="bg-slate-900 text-white h-screen overflow-hidden">
@@ -79,7 +88,7 @@
     function SoundBoardApp() {
       const [audioCtx, setAudioCtx] = useState(null);
       const [pads, setPads] = useState(generatePads());
-      const [playingPads, setPlayingPads] = useState({});
+      const [playingPads, setPlayingPads] = useState({}); // Stores { startTime, duration } if playing
       const [editingPadId, setEditingPadId] = useState(null);
       const [isReady, setIsReady] = useState(false);
       const [isLoadingData, setIsLoadingData] = useState(true);
@@ -143,17 +152,14 @@
       const executeDelete = async () => {
         const padId = confirmDeleteId;
         if (padId === null) return;
-
+        setConfirmDeleteId(null); 
         if (activeAudioNodes.current[padId]) stopPad(padId, 'CUT');
-        
         setPads(prev => {
           const newPads = [...prev];
           newPads[padId] = { id: padId, keyTrigger: KEY_MAP[padId], name: `Pad ${padId + 1}`, color: COLORS[padId], buffer: null, blob: null, url: null, settings: { start: 0, end: 1, fadeIn: 0, fadeOut: 0, volume: 1 } };
           return newPads;
         });
-        
         try { await idbKeyval.del(`pad_${padId}`); } catch (e) { console.error(e); }
-        setConfirmDeleteId(null); 
       };
 
       const handlePadSwap = async (targetId) => {
@@ -297,7 +303,13 @@
         }
         source.start(now, startTime, playDuration);
         activeAudioNodes.current[padId] = { source, gain: gainNode, isStopping: false };
-        setPlayingPads(prev => ({ ...prev, [padId]: true }));
+        
+        // UPDATE: Store startTime and duration for progress bar
+        setPlayingPads(prev => ({ 
+          ...prev, 
+          [padId]: { startTime: now, duration: playDuration } 
+        }));
+        
         source.onended = () => {
           if (activeAudioNodes.current[padId]?.source === source) {
             delete activeAudioNodes.current[padId];
@@ -389,7 +401,8 @@
                 <div key={pad.id} className="relative w-full h-full">
                   <PadBase 
                     pad={pad} 
-                    isPlaying={!!playingPads[pad.id]} 
+                    playingInfo={playingPads[pad.id]} // Pass object or null
+                    audioCtx={audioCtx}
                     isEditMode={isEditMode} 
                     isSwapSelected={swapSourceId === pad.id}
                     onInteraction={() => {
@@ -431,7 +444,6 @@
           {editingPadId !== null && (
             <EditorModal pad={pads.find(p => p.id === editingPadId)} onClose={() => handleEditorClose(editingPadId)} onUpdate={(settings) => updatePadSettings(editingPadId, settings)} />
           )}
-          {/* Custom Delete Confirmation Modal */}
           {confirmDeleteId !== null && (
             <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
               <div className="bg-slate-800 rounded-xl p-6 max-w-sm w-full border border-slate-700 shadow-2xl">
@@ -451,25 +463,85 @@
       );
     }
 
-    const PadBase = ({ pad, isPlaying, isEditMode, isSwapSelected, onInteraction }) => {
+    const PadBase = ({ pad, playingInfo, audioCtx, isEditMode, isSwapSelected, onInteraction }) => {
       const hasAudio = !!pad.buffer || !!pad.blob;
-      
+      const progressRef = useRef(null);
+      const padRef = useRef(null);
+      const animationRef = useRef(null);
+      const timeDisplayRef = useRef(null); // Ref for time text update
+
       const handlePointer = (e) => {
         if (isEditMode) { if (e.type === 'click') onInteraction(); } 
         else { if (!hasAudio && e.type === 'click') onInteraction(); if (hasAudio && e.type === 'pointerdown') onInteraction(); }
       };
 
-      // Calculate displayed duration
-      let displayDuration = null;
+      // Calculate base duration for display when NOT playing
+      let totalDuration = 0;
       if (hasAudio && pad.buffer) {
-        const totalDuration = pad.buffer.duration;
-        const playDuration = totalDuration * (pad.settings.end - pad.settings.start);
-        displayDuration = formatDuration(playDuration);
+        totalDuration = pad.buffer.duration * (pad.settings.end - pad.settings.start);
       }
 
+      // Animation Loop for Progress & Flash
+      useEffect(() => {
+        if (!playingInfo || !audioCtx) {
+          if (progressRef.current) progressRef.current.style.width = '0%';
+          if (padRef.current) padRef.current.classList.remove('animate-flash');
+          // Reset time display to total duration when stopped
+          if (timeDisplayRef.current && totalDuration > 0) {
+             timeDisplayRef.current.innerText = formatDuration(totalDuration);
+          }
+          if (animationRef.current) cancelAnimationFrame(animationRef.current);
+          return;
+        }
+
+        const update = () => {
+          const now = audioCtx.currentTime;
+          const elapsed = now - playingInfo.startTime;
+          const duration = playingInfo.duration;
+          const remaining = Math.max(0, duration - elapsed);
+
+          // 1. Progress Bar
+          const percent = Math.min(100, Math.max(0, (elapsed / duration) * 100));
+          if (progressRef.current) {
+            progressRef.current.style.width = `${percent}%`;
+          }
+
+          // 2. Time Display (Remaining)
+          if (timeDisplayRef.current) {
+             timeDisplayRef.current.innerText = formatDuration(remaining);
+          }
+
+          // 3. Flash (Last 5s)
+          if (remaining <= 5 && remaining > 0) {
+            if (padRef.current) padRef.current.classList.add('animate-flash');
+          } else {
+            if (padRef.current) padRef.current.classList.remove('animate-flash');
+          }
+
+          if (percent < 100) {
+            animationRef.current = requestAnimationFrame(update);
+          } else {
+             // End
+             if (padRef.current) padRef.current.classList.remove('animate-flash');
+          }
+        };
+        animationRef.current = requestAnimationFrame(update);
+
+        return () => cancelAnimationFrame(animationRef.current);
+      }, [playingInfo, audioCtx, totalDuration]);
+
       return (
-        <div className={`w-full h-full rounded-xl border-b-4 transition-all active:border-b-0 active:translate-y-1 cursor-pointer relative overflow-hidden ${hasAudio ? pad.color : 'bg-slate-700 border-slate-600'} ${hasAudio ? 'border-black/20' : ''} ${isPlaying ? 'brightness-125 scale-[0.98] border-b-0 translate-y-1 ring-4 ring-white/50' : ''} ${isEditMode ? 'ring-2 ring-amber-500/50 border-amber-600 border-dashed' : ''} ${isSwapSelected ? 'ring-4 ring-amber-400 animate-pulse scale-95 opacity-80' : ''}`} onPointerDown={handlePointer} onClick={handlePointer}>
-          <div className="flex flex-col items-center justify-center h-full p-4 pointer-events-none select-none">
+        <div 
+          ref={padRef}
+          className={`w-full h-full rounded-xl border-b-4 transition-all active:border-b-0 active:translate-y-1 cursor-pointer relative overflow-hidden ${hasAudio ? pad.color : 'bg-slate-700 border-slate-600'} ${hasAudio ? 'border-black/20' : ''} ${playingInfo ? 'brightness-125 scale-[0.98] border-b-0 translate-y-1 ring-4 ring-white/50' : ''} ${isEditMode ? 'ring-2 ring-amber-500/50 border-amber-600 border-dashed' : ''} ${isSwapSelected ? 'ring-4 ring-amber-400 animate-pulse scale-95 opacity-80' : ''}`} 
+          onPointerDown={handlePointer} onClick={handlePointer}
+        >
+          {/* Progress Bar Background */}
+          {playingInfo && (
+            <div className="absolute bottom-0 left-0 h-full bg-white/20 pointer-events-none transition-all duration-75 ease-linear" ref={progressRef} style={{width: '0%'}}></div>
+          )}
+
+          <div className="flex flex-col items-center justify-center h-full p-4 pointer-events-none select-none relative z-10">
             <span className="absolute top-2 left-3 font-mono text-2xl font-bold opacity-50 text-black/40">{isEditMode ? '' : pad.keyTrigger}</span>
             {!hasAudio ? (
               <div className="flex flex-col items-center text-slate-400"><Upload size={32} className={`mb-2 opacity-50 ${isEditMode ? 'hidden' : ''}`} /><span className="text-sm font-medium">{isEditMode ? '空' : '音声読込'}</span></div>
@@ -477,14 +549,14 @@
               <div className="text-center w-full">
                  <div className="font-bold text-lg text-white drop-shadow-md break-all line-clamp-2 leading-tight px-1 mb-1">{pad.name}</div>
                  
-                 {/* Duration Display */}
-                 {displayDuration && !isPlaying && !isEditMode && (
-                   <div className="flex items-center justify-center gap-1 text-[10px] bg-black/20 rounded-full px-2 py-0.5 mx-auto w-fit text-white/90">
-                     <Clock size={10} /> {displayDuration}
+                 {/* Duration Display (Dynamic) */}
+                 {!isEditMode && (
+                   <div className="flex items-center justify-center gap-1 text-[12px] font-mono font-bold bg-black/30 rounded-full px-3 py-1 mx-auto w-fit text-white border border-white/20 shadow-sm">
+                     <Clock size={12} /> <span ref={timeDisplayRef}>{formatDuration(totalDuration)}</span>
                    </div>
                  )}
 
-                 {isPlaying && (<div className="absolute bottom-4 left-0 right-0 flex justify-center"><div className="animate-pulse bg-white/30 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">再生中</div></div>)}
+                 {playingInfo && (<div className="absolute bottom-1 left-0 right-0 flex justify-center"><div className="animate-pulse text-[10px] font-bold uppercase tracking-wider text-white/80">PLAYING</div></div>)}
               </div>
             )}
           </div>
@@ -527,7 +599,7 @@
         const totalSamples = pad.buffer.length;
         const startX = getScreenX(pad.settings.start, width, totalSamples);
         const endX = getScreenX(pad.settings.end, width, totalSamples);
-        const threshold = 30; // Increased threshold for easier touch
+        const threshold = 50; 
         if (Math.abs(x - startX) < threshold) { setDraggingHandle('start'); e.target.setPointerCapture(e.pointerId); }
         else if (Math.abs(x - endX) < threshold) { setDraggingHandle('end'); e.target.setPointerCapture(e.pointerId); }
       };
@@ -546,7 +618,7 @@
         }
         const startX = getScreenX(pad.settings.start, width, totalSamples);
         const endX = getScreenX(pad.settings.end, width, totalSamples);
-        const threshold = 30; 
+        const threshold = 50; 
         if (Math.abs(x - startX) < threshold) setHoverHandle('start');
         else if (Math.abs(x - endX) < threshold) setHoverHandle('end');
         else setHoverHandle(null);
@@ -623,7 +695,7 @@
                     ref={canvasRef} 
                     width={800} 
                     height={192} 
-                    style={{ touchAction: 'none' }} // Ensure no scrolling on touch
+                    style={{ touchAction: 'none' }} 
                     className={`w-full h-full object-cover ${hoverHandle ? 'cursor-ew-resize' : 'cursor-default'}`} 
                     onPointerDown={handlePointerDown} 
                     onPointerMove={handlePointerMove} 
@@ -636,7 +708,7 @@
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-slate-700/50">
                 <div className="space-y-4 p-4 bg-slate-700/30 rounded-lg">
-                  <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">範囲指定</h3>
+                  <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">範囲指定 (秒)</h3>
                   <div className="space-y-1"><div className="flex justify-between text-xs"><span className="text-green-400 font-bold">開始位置</span><span>{(pad.settings.start * totalDuration).toFixed(3)}s</span></div><input type="range" min="0" max="1" step="0.001" value={pad.settings.start} onChange={(e) => { const val = parseFloat(e.target.value); if (val < pad.settings.end) onUpdate({ start: val }); }} className="w-full accent-green-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" /></div>
                   <div className="space-y-1"><div className="flex justify-between text-xs"><span className="text-red-400 font-bold">終了位置</span><span>{(pad.settings.end * totalDuration).toFixed(3)}s</span></div><input type="range" min="0" max="1" step="0.001" value={pad.settings.end} onChange={(e) => { const val = parseFloat(e.target.value); if (val > pad.settings.start) onUpdate({ end: val }); }} className="w-full accent-red-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" /></div>
                 </div>
