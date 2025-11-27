@@ -426,7 +426,7 @@
             </div>
           </main>
           {pads.map((pad, idx) => (
-            <input key={pad.id} type="file" accept="audio/*,.wav,.mp3,.m4a,.aif,.aiff" className="hidden" ref={el => fileInputRefs.current[idx] = el} onChange={(e) => handleFileUpload(e, idx)} />
+            <input key={pad.id} type="file" accept="audio/*,.wav,.mp3,.m4a,.aif,.aiff,.aac,.flac,.ogg" className="hidden" ref={el => fileInputRefs.current[idx] = el} onChange={(e) => handleFileUpload(e, idx)} />
           ))}
           {editingPadId !== null && (
             <EditorModal pad={pads.find(p => p.id === editingPadId)} onClose={() => handleEditorClose(editingPadId)} onUpdate={(settings) => updatePadSettings(editingPadId, settings)} />
