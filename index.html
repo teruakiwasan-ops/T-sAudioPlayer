@@ -68,17 +68,29 @@
     const AlertTriangle = (p) => <Icon {...p}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></Icon>;
     const Clock = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></Icon>;
     const Repeat = (p) => <Icon {...p}><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></Icon>;
+    const Grid = (p) => <Icon {...p}><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></Icon>;
 
     // --- Constants ---
-    const PAD_COUNT = 10;
-    const KEY_MAP = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
-    const COLORS = ['bg-red-500', 'bg-orange-500', 'bg-amber-500', 'bg-yellow-500', 'bg-lime-500', 'bg-green-500', 'bg-emerald-500', 'bg-teal-500', 'bg-cyan-500', 'bg-sky-500'];
+    // Expanded to 20 keys: 1-0, then q-p
+    const KEY_MAP = [
+      '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
+      'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'
+    ];
+    const COLORS = [
+      'bg-red-500', 'bg-orange-500', 'bg-amber-500', 'bg-yellow-500', 'bg-lime-500', 
+      'bg-green-500', 'bg-emerald-500', 'bg-teal-500', 'bg-cyan-500', 'bg-sky-500',
+      'bg-red-600', 'bg-orange-600', 'bg-amber-600', 'bg-yellow-600', 'bg-lime-600', 
+      'bg-green-600', 'bg-emerald-600', 'bg-teal-600', 'bg-cyan-600', 'bg-sky-600'
+    ];
     const FADE_DURATIONS = [0.5, 1.0, 2.0, 3.0];
 
-    // Initial pad state now includes loop: false
-    const generatePads = () => Array.from({ length: PAD_COUNT }, (_, i) => ({
-      id: i, keyTrigger: KEY_MAP[i], name: `Pad ${i + 1}`, color: COLORS[i],
-      buffer: null, blob: null, url: null, settings: { start: 0, end: 1, fadeIn: 0, fadeOut: 0, volume: 1, loop: false }
+    const generatePads = (count) => Array.from({ length: count }, (_, i) => ({
+      id: i, 
+      keyTrigger: KEY_MAP[i], 
+      name: `Pad ${i + 1}`, 
+      color: COLORS[i % COLORS.length],
+      buffer: null, blob: null, url: null, 
+      settings: { start: 0, end: 1, fadeIn: 0, fadeOut: 0, volume: 1, loop: false }
     }));
 
     // --- Helper for Duration Formatting ---
@@ -89,8 +101,9 @@
 
     function SoundBoardApp() {
       const [audioCtx, setAudioCtx] = useState(null);
-      const [pads, setPads] = useState(generatePads());
-      const [playingPads, setPlayingPads] = useState({}); // Stores { startTime, duration, loop } if playing
+      const [padCount, setPadCount] = useState(10); // 10 or 20
+      const [pads, setPads] = useState(generatePads(10));
+      const [playingPads, setPlayingPads] = useState({}); 
       const [editingPadId, setEditingPadId] = useState(null);
       const [isReady, setIsReady] = useState(false);
       const [isLoadingData, setIsLoadingData] = useState(true);
@@ -108,16 +121,23 @@
       useEffect(() => {
         const loadPads = async () => {
           try {
-            const loadedPads = [...pads];
             let hasData = false;
             const savedMode = await idbKeyval.get('transitionMode');
             if (savedMode) setTransitionMode(savedMode);
             const savedDur = await idbKeyval.get('crossfadeDuration');
             if (savedDur) setCrossfadeDuration(savedDur);
-            for (let i = 0; i < PAD_COUNT; i++) {
+            
+            // Load Pad Count
+            const savedPadCount = await idbKeyval.get('padCount');
+            const currentCount = savedPadCount || 10;
+            setPadCount(currentCount);
+            
+            // Initial Pads
+            const loadedPads = generatePads(currentCount);
+
+            for (let i = 0; i < currentCount; i++) {
               const data = await idbKeyval.get(`pad_${i}`);
               if (data) {
-                // Ensure loop setting exists if loading from older data
                 const settings = { loop: false, ...data.settings };
                 loadedPads[i] = { 
                   ...loadedPads[i], 
@@ -130,6 +150,7 @@
               }
             }
             if (hasData) setPads(loadedPads);
+            else setPads(generatePads(currentCount)); // Reset if no data but count changed
           } catch (e) { console.error(e); } finally { setIsLoadingData(false); }
         };
         loadPads();
@@ -137,6 +158,67 @@
 
       const savePadToDb = async (pad, index) => {
         try { const { buffer, url, ...dataToSave } = pad; await idbKeyval.set(`pad_${index}`, dataToSave); } catch (e) { console.error(e); }
+      };
+
+      // Toggle Pad Count
+      const togglePadCount = async () => {
+        const newCount = padCount === 10 ? 20 : 10;
+        setPadCount(newCount);
+        await idbKeyval.set('padCount', newCount);
+        
+        // Resize pads array while keeping existing data
+        setPads(prev => {
+          const newPads = generatePads(newCount);
+          // Copy existing data
+          for (let i = 0; i < Math.min(prev.length, newCount); i++) {
+            newPads[i] = { ...prev[i], id: i, keyTrigger: KEY_MAP[i], color: COLORS[i] }; // Ensure ID/Key/Color align
+            // Keep content
+            newPads[i].name = prev[i].name;
+            newPads[i].buffer = prev[i].buffer;
+            newPads[i].blob = prev[i].blob;
+            newPads[i].url = prev[i].url;
+            newPads[i].settings = prev[i].settings;
+          }
+          // Try to load from DB if expanding (e.g. 10->20, check if 11-20 exist in DB)
+          if (newCount > prev.length) {
+             // Since we can't await inside setState easily, we just init with default.
+             // To restore hidden data properly, we should ideally reload from DB, 
+             // but simplified approach: assume empty for new slots or reload page.
+             // For better UX, let's try to fetch missing ones in a separate effect if needed,
+             // but here we just reset new slots.
+             // *Self-correction*: The user might have data in 11-20 from before. 
+             // We will trigger a background load for new slots.
+             loadExtraPads(newPads, prev.length, newCount);
+          }
+          return newPads;
+        });
+      };
+
+      const loadExtraPads = async (currentPadsArray, start, end) => {
+         const newPads = [...currentPadsArray];
+         let updated = false;
+         for (let i = start; i < end; i++) {
+            const data = await idbKeyval.get(`pad_${i}`);
+            if (data) {
+               const settings = { loop: false, ...data.settings };
+               newPads[i] = { 
+                  ...newPads[i], 
+                  ...data, 
+                  settings, 
+                  buffer: null, // Buffer needs decoding, handled by file upload or init
+                  url: data.blob ? URL.createObjectURL(data.blob) : null 
+               };
+               // If audio context is ready, we should decode. 
+               if (audioCtx && data.blob) {
+                  try {
+                    const ab = await data.blob.arrayBuffer();
+                    newPads[i].buffer = await audioCtx.decodeAudioData(ab);
+                  } catch(e) {}
+               }
+               updated = true;
+            }
+         }
+         if (updated) setPads(newPads);
       };
 
       const stopPad = useCallback((padId, mode = 'CUT', duration = 0) => {
@@ -199,7 +281,13 @@
         setIsProcessing(true);
         try {
           const zip = new JSZip();
-          const metadata = { transitionMode, crossfadeDuration, timestamp: new Date().toISOString(), pads: [] };
+          const metadata = { 
+            transitionMode, 
+            crossfadeDuration, 
+            padCount, // Save pad count
+            timestamp: new Date().toISOString(), 
+            pads: [] 
+          };
           pads.forEach((pad, idx) => {
             const padMeta = { id: idx, name: pad.name, keyTrigger: pad.keyTrigger, settings: pad.settings, hasAudio: false };
             if (pad.blob) {
@@ -216,7 +304,7 @@
           const link = document.createElement("a");
           link.href = url;
           const dateStr = new Date().toISOString().slice(0,10).replace(/-/g,'');
-          link.download = `TPAD_${dateStr}.tsp`; // Changed filename
+          link.download = `TPAD_${dateStr}.tsp`;
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);
@@ -233,15 +321,22 @@
           if (!zip.file("project.json")) throw new Error("Invalid project file");
           const metaStr = await zip.file("project.json").async("string");
           const metadata = JSON.parse(metaStr);
+          
           if (metadata.transitionMode) setTransitionMode(metadata.transitionMode);
           if (metadata.crossfadeDuration) setCrossfadeDuration(metadata.crossfadeDuration);
-          const newPads = generatePads();
+          
+          // Restore Pad Count
+          const count = metadata.padCount || 10;
+          setPadCount(count);
+          await idbKeyval.set('padCount', count);
+
+          const newPads = generatePads(count);
           const ctx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
           if (!audioCtx) setAudioCtx(ctx);
+          
           await Promise.all(metadata.pads.map(async (padMeta) => {
             const index = padMeta.id;
-            if (index >= 0 && index < PAD_COUNT) {
-              // Ensure settings have loop if importing old project
+            if (index >= 0 && index < count) {
               const settings = { loop: false, ...padMeta.settings };
               newPads[index] = { ...newPads[index], name: padMeta.name, settings };
               if (padMeta.hasAudio && padMeta.fileName) {
@@ -296,8 +391,6 @@
         });
         const source = audioCtx.createBufferSource();
         source.buffer = pad.buffer;
-        
-        // Loop settings
         source.loop = pad.settings.loop;
         
         const gainNode = audioCtx.createGain();
@@ -316,7 +409,6 @@
           gainNode.gain.linearRampToValueAtTime(pad.settings.volume, now + Math.min(pad.settings.fadeIn, playDuration));
         }
         if (!pad.settings.loop && pad.settings.fadeOut > 0) {
-          // Fade out only applies if not looping (or handle fade out on stop manually)
           const fadeOutStart = now + playDuration - pad.settings.fadeOut;
           gainNode.gain.setValueAtTime(pad.settings.volume, Math.max(now, fadeOutStart));
           gainNode.gain.linearRampToValueAtTime(0, now + playDuration);
@@ -325,7 +417,7 @@
         if (pad.settings.loop) {
           source.loopStart = startTime;
           source.loopEnd = endTime;
-          source.start(now, startTime); // Play with offset, duration not set to allow loop
+          source.start(now, startTime); 
         } else {
           source.start(now, startTime, playDuration);
         }
@@ -338,7 +430,6 @@
         }));
         
         source.onended = () => {
-          // Only cleanup if this source is still the active one (not replaced)
           if (activeAudioNodes.current[padId]?.source === source) {
             delete activeAudioNodes.current[padId];
             setPlayingPads(prev => { const n = { ...prev }; delete n[padId]; return n; });
@@ -365,12 +456,15 @@
       useEffect(() => {
         const handleKeyDown = (e) => {
           if (!isReady || isEditMode || e.target.tagName === 'INPUT') return;
-          const idx = KEY_MAP.indexOf(e.key);
-          if (idx !== -1) triggerPad(idx);
+          // Normalize key to handle CAPS LOCK or Shift
+          const key = e.key.toLowerCase();
+          const idx = KEY_MAP.indexOf(key);
+          // Only trigger if key is valid for current pad count
+          if (idx !== -1 && idx < padCount) triggerPad(idx);
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-      }, [isReady, triggerPad, isEditMode]);
+      }, [isReady, triggerPad, isEditMode, padCount]);
 
       const updatePadSettings = (id, newSettings) => {
         setPads(prev => {
@@ -394,12 +488,27 @@
         );
       }
 
+      // Dynamic Grid Class
+      const gridClass = padCount === 10 
+        ? "grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-4" 
+        : "grid grid-cols-4 sm:grid-cols-5 gap-2 sm:gap-4"; // 20 pads layout
+
       return (
         <div className="flex flex-col h-screen bg-slate-900 text-slate-100 overflow-hidden select-none">
           <header className="flex flex-col gap-2 px-4 py-3 bg-slate-800 border-b border-slate-700 shadow-md z-10">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2"><Music className="text-blue-400" /><h1 className="text-lg sm:text-xl font-bold tracking-tight">T-PAD</h1></div>
               <div className="flex items-center gap-2">
+                 {/* Pad Count Toggle */}
+                 <button 
+                   onClick={togglePadCount}
+                   disabled={isProcessing}
+                   className="flex items-center gap-1 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-bold text-slate-300 disabled:opacity-30 mr-2"
+                   title="パッド数を切替"
+                 >
+                   <Grid size={14} /> {padCount}
+                 </button>
+
                  <button onClick={() => { setIsEditMode(!isEditMode); setSwapSourceId(null); }} className={`flex items-center gap-1 px-3 py-1.5 rounded text-xs font-bold transition-colors ${isEditMode ? 'bg-amber-600 text-white animate-pulse' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}><Edit3 size={14} /> {isEditMode ? 'EDIT中' : 'EDIT'}</button>
                  <div className="flex items-center gap-1 bg-slate-700/50 rounded p-0.5">
                    <button onClick={handleExportProject} disabled={isProcessing || isEditMode} className="p-1.5 hover:bg-slate-600 rounded text-slate-300 disabled:opacity-30"><Download size={16} /></button>
@@ -424,7 +533,7 @@
 
           <main className="flex-1 p-2 sm:p-4 overflow-y-auto">
             {isProcessing && <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"><div className="text-xl font-bold animate-pulse">処理中...</div></div>}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-4 h-full max-h-[800px] mx-auto max-w-6xl">
+            <div className={`${gridClass} h-full max-h-[800px] mx-auto max-w-6xl`}>
               {pads.map((pad, idx) => (
                 <div key={pad.id} className="relative w-full h-full">
                   <PadBase 
