@@ -50,12 +50,14 @@
     const Maximize = (p) => <Icon {...p}><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></Icon>;
     const ArrowUpDown = (p) => <Icon {...p}><path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/></Icon>;
     const ArrowLeftRight = (p) => <Icon {...p}><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></Icon>;
+    const Save = (p) => <Icon {...p}><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></Icon>;
     const FolderOpen = (p) => <Icon {...p}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></Icon>;
     const Download = (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></Icon>;
     const Trash2 = (p) => <Icon {...p}><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></Icon>;
     const Edit3 = (p) => <Icon {...p}><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></Icon>;
     const Move = (p) => <Icon {...p}><polyline points="5 9 2 12 5 15"></polyline><polyline points="9 5 12 2 15 5"></polyline><polyline points="19 9 22 12 19 15"></polyline><polyline points="9 19 12 22 15 19"></polyline><line x1="2" y1="12" x2="22" y2="12"></line><line x1="12" y1="2" x2="12" y2="22"></line></Icon>;
     const AlertTriangle = (p) => <Icon {...p}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></Icon>;
+    const Clock = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></Icon>;
 
     // --- Constants ---
     const PAD_COUNT = 10;
@@ -67,6 +69,12 @@
       id: i, keyTrigger: KEY_MAP[i], name: `Pad ${i + 1}`, color: COLORS[i],
       buffer: null, blob: null, url: null, settings: { start: 0, end: 1, fadeIn: 0, fadeOut: 0, volume: 1 }
     }));
+
+    // --- Helper for Duration Formatting ---
+    const formatDuration = (seconds) => {
+      if (!seconds && seconds !== 0) return "--";
+      return seconds.toFixed(2) + "s";
+    };
 
     function SoundBoardApp() {
       const [audioCtx, setAudioCtx] = useState(null);
@@ -80,7 +88,7 @@
       const [crossfadeDuration, setCrossfadeDuration] = useState(1.0);
       const [isEditMode, setIsEditMode] = useState(false);
       const [swapSourceId, setSwapSourceId] = useState(null);
-      const [confirmDeleteId, setConfirmDeleteId] = useState(null); // ID for delete confirmation modal
+      const [confirmDeleteId, setConfirmDeleteId] = useState(null); 
 
       const activeAudioNodes = useRef({});
       const fileInputRefs = useRef([]);
@@ -128,7 +136,6 @@
         } catch (e) { console.error(e); }
       }, [audioCtx]);
 
-      // Trigger the custom modal instead of window.confirm
       const requestDelete = (padId) => {
         setConfirmDeleteId(padId);
       };
@@ -146,7 +153,7 @@
         });
         
         try { await idbKeyval.del(`pad_${padId}`); } catch (e) { console.error(e); }
-        setConfirmDeleteId(null); // Close modal
+        setConfirmDeleteId(null); 
       };
 
       const handlePadSwap = async (targetId) => {
@@ -171,9 +178,8 @@
       useEffect(() => { idbKeyval.set('transitionMode', transitionMode); }, [transitionMode]);
       useEffect(() => { idbKeyval.set('crossfadeDuration', crossfadeDuration); }, [crossfadeDuration]);
 
-      // Export/Import skipped for brevity but assumed present logic same as before...
       const handleExportProject = async () => {
-        if (!isReady) return; // Skip confirm check for simplicity in this fix
+        if (!isReady) return; 
         setIsProcessing(true);
         try {
           const zip = new JSZip();
@@ -205,7 +211,6 @@
       const handleImportProject = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        // Custom logic for confirm would be needed here too, but skipping for now to fix Delete first
         setIsProcessing(true);
         try {
           const zip = await JSZip.loadAsync(file);
@@ -448,13 +453,41 @@
 
     const PadBase = ({ pad, isPlaying, isEditMode, isSwapSelected, onInteraction }) => {
       const hasAudio = !!pad.buffer || !!pad.blob;
+      
       const handlePointer = (e) => {
         if (isEditMode) { if (e.type === 'click') onInteraction(); } 
         else { if (!hasAudio && e.type === 'click') onInteraction(); if (hasAudio && e.type === 'pointerdown') onInteraction(); }
       };
+
+      // Calculate displayed duration
+      let displayDuration = null;
+      if (hasAudio && pad.buffer) {
+        const totalDuration = pad.buffer.duration;
+        const playDuration = totalDuration * (pad.settings.end - pad.settings.start);
+        displayDuration = formatDuration(playDuration);
+      }
+
       return (
         <div className={`w-full h-full rounded-xl border-b-4 transition-all active:border-b-0 active:translate-y-1 cursor-pointer relative overflow-hidden ${hasAudio ? pad.color : 'bg-slate-700 border-slate-600'} ${hasAudio ? 'border-black/20' : ''} ${isPlaying ? 'brightness-125 scale-[0.98] border-b-0 translate-y-1 ring-4 ring-white/50' : ''} ${isEditMode ? 'ring-2 ring-amber-500/50 border-amber-600 border-dashed' : ''} ${isSwapSelected ? 'ring-4 ring-amber-400 animate-pulse scale-95 opacity-80' : ''}`} onPointerDown={handlePointer} onClick={handlePointer}>
-          <div className="flex flex-col items-center justify-center h-full p-4 pointer-events-none select-none"><span className="absolute top-2 left-3 font-mono text-2xl font-bold opacity-50 text-black/40">{isEditMode ? '' : pad.keyTrigger}</span>{!hasAudio ? (<div className="flex flex-col items-center text-slate-400"><Upload size={32} className={`mb-2 opacity-50 ${isEditMode ? 'hidden' : ''}`} /><span className="text-sm font-medium">{isEditMode ? '空' : '音声読込'}</span></div>) : (<div className="text-center"><div className="font-bold text-lg text-white drop-shadow-md break-all line-clamp-2 leading-tight">{pad.name}</div>{isPlaying && (<div className="absolute bottom-4 left-0 right-0 flex justify-center"><div className="animate-pulse bg-white/30 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">再生中</div></div>)}</div>)}</div>
+          <div className="flex flex-col items-center justify-center h-full p-4 pointer-events-none select-none">
+            <span className="absolute top-2 left-3 font-mono text-2xl font-bold opacity-50 text-black/40">{isEditMode ? '' : pad.keyTrigger}</span>
+            {!hasAudio ? (
+              <div className="flex flex-col items-center text-slate-400"><Upload size={32} className={`mb-2 opacity-50 ${isEditMode ? 'hidden' : ''}`} /><span className="text-sm font-medium">{isEditMode ? '空' : '音声読込'}</span></div>
+            ) : (
+              <div className="text-center w-full">
+                 <div className="font-bold text-lg text-white drop-shadow-md break-all line-clamp-2 leading-tight px-1 mb-1">{pad.name}</div>
+                 
+                 {/* Duration Display */}
+                 {displayDuration && !isPlaying && !isEditMode && (
+                   <div className="flex items-center justify-center gap-1 text-[10px] bg-black/20 rounded-full px-2 py-0.5 mx-auto w-fit text-white/90">
+                     <Clock size={10} /> {displayDuration}
+                   </div>
+                 )}
+
+                 {isPlaying && (<div className="absolute bottom-4 left-0 right-0 flex justify-center"><div className="animate-pulse bg-white/30 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">再生中</div></div>)}
+              </div>
+            )}
+          </div>
         </div>
       );
     };
@@ -466,6 +499,8 @@
       const [scrollPos, setScrollPos] = useState(0); 
       const [draggingHandle, setDraggingHandle] = useState(null);
       const [hoverHandle, setHoverHandle] = useState(null);
+
+      const totalDuration = pad.buffer ? pad.buffer.duration : 0;
 
       const getScreenX = useCallback((normalizedValue, width, totalSamples) => {
          const viewSizeSamples = Math.floor(totalSamples / zoomX);
@@ -492,7 +527,7 @@
         const totalSamples = pad.buffer.length;
         const startX = getScreenX(pad.settings.start, width, totalSamples);
         const endX = getScreenX(pad.settings.end, width, totalSamples);
-        const threshold = 20;
+        const threshold = 30; // Increased threshold for easier touch
         if (Math.abs(x - startX) < threshold) { setDraggingHandle('start'); e.target.setPointerCapture(e.pointerId); }
         else if (Math.abs(x - endX) < threshold) { setDraggingHandle('end'); e.target.setPointerCapture(e.pointerId); }
       };
@@ -511,7 +546,7 @@
         }
         const startX = getScreenX(pad.settings.start, width, totalSamples);
         const endX = getScreenX(pad.settings.end, width, totalSamples);
-        const threshold = 20;
+        const threshold = 30; 
         if (Math.abs(x - startX) < threshold) setHoverHandle('start');
         else if (Math.abs(x - endX) < threshold) setHoverHandle('end');
         else setHoverHandle(null);
@@ -584,7 +619,17 @@
                   <button onClick={() => { setZoomX(1); setZoomY(1); setScrollPos(0); }} className="ml-auto text-xs flex items-center gap-1 px-3 py-1.5 bg-slate-600 hover:bg-slate-500 rounded text-white"><Maximize size={12} /> リセット</button>
                 </div>
                 <div className="relative h-48 w-full rounded-lg overflow-hidden ring-1 ring-slate-600 bg-slate-900 shadow-inner group">
-                  <canvas ref={canvasRef} width={800} height={192} className={`w-full h-full object-cover touch-none ${hoverHandle ? 'cursor-ew-resize' : 'cursor-default'}`} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp} />
+                  <canvas 
+                    ref={canvasRef} 
+                    width={800} 
+                    height={192} 
+                    style={{ touchAction: 'none' }} // Ensure no scrolling on touch
+                    className={`w-full h-full object-cover ${hoverHandle ? 'cursor-ew-resize' : 'cursor-default'}`} 
+                    onPointerDown={handlePointerDown} 
+                    onPointerMove={handlePointerMove} 
+                    onPointerUp={handlePointerUp} 
+                    onPointerLeave={handlePointerUp} 
+                  />
                   {zoomX === 1 && !draggingHandle && !hoverHandle && (<div className="absolute bottom-2 right-2 text-[10px] text-slate-500 pointer-events-none opacity-50">緑(開始)・赤(終了)の線をドラッグして調整</div>)}
                 </div>
                 <div className={`transition-opacity duration-200 ${zoomX > 1 ? 'opacity-100' : 'opacity-30 pointer-events-none'}`}><input type="range" min="0" max="1" step="0.001" value={scrollPos} onChange={(e) => setScrollPos(parseFloat(e.target.value))} className="w-full accent-slate-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" /></div>
@@ -592,8 +637,8 @@
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-slate-700/50">
                 <div className="space-y-4 p-4 bg-slate-700/30 rounded-lg">
                   <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">範囲指定</h3>
-                  <div className="space-y-1"><div className="flex justify-between text-xs"><span className="text-green-400 font-bold">開始位置</span><span>{(pad.settings.start * 100).toFixed(1)}%</span></div><input type="range" min="0" max="1" step="0.001" value={pad.settings.start} onChange={(e) => { const val = parseFloat(e.target.value); if (val < pad.settings.end) onUpdate({ start: val }); }} className="w-full accent-green-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" /></div>
-                  <div className="space-y-1"><div className="flex justify-between text-xs"><span className="text-red-400 font-bold">終了位置</span><span>{(pad.settings.end * 100).toFixed(1)}%</span></div><input type="range" min="0" max="1" step="0.001" value={pad.settings.end} onChange={(e) => { const val = parseFloat(e.target.value); if (val > pad.settings.start) onUpdate({ end: val }); }} className="w-full accent-red-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" /></div>
+                  <div className="space-y-1"><div className="flex justify-between text-xs"><span className="text-green-400 font-bold">開始位置</span><span>{(pad.settings.start * totalDuration).toFixed(3)}s</span></div><input type="range" min="0" max="1" step="0.001" value={pad.settings.start} onChange={(e) => { const val = parseFloat(e.target.value); if (val < pad.settings.end) onUpdate({ start: val }); }} className="w-full accent-green-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" /></div>
+                  <div className="space-y-1"><div className="flex justify-between text-xs"><span className="text-red-400 font-bold">終了位置</span><span>{(pad.settings.end * totalDuration).toFixed(3)}s</span></div><input type="range" min="0" max="1" step="0.001" value={pad.settings.end} onChange={(e) => { const val = parseFloat(e.target.value); if (val > pad.settings.start) onUpdate({ end: val }); }} className="w-full accent-red-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer" /></div>
                 </div>
                 <div className="space-y-4 p-4 bg-slate-700/30 rounded-lg">
                   <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">エフェクト</h3>
