@@ -93,6 +93,7 @@
     const Play = (p) => <Icon {...p}><polygon points="5 3 19 12 5 21 5 3"></polygon></Icon>;
     const Square = (p) => <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></Icon>;
     const RefreshCw = (p) => <Icon {...p}><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></Icon>;
+    const Timer = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></Icon>;
 
 
     // --- Constants ---
@@ -114,7 +115,10 @@
       name: `Pad ${i + 1}`, 
       color: COLORS[i % COLORS.length],
       buffer: null, blob: null, url: null, 
-      settings: { start: 0, end: 1, fadeIn: 0, fadeOut: 0, volume: 1, loop: false }
+      settings: { 
+        start: 0, end: 1, fadeIn: 0, fadeOut: 0, volume: 1, loop: false,
+        enableTrigger: false, triggerTime: '' 
+      }
     }));
 
     const formatDuration = (seconds) => {
@@ -136,11 +140,64 @@
       const [isEditMode, setIsEditMode] = useState(false);
       const [swapSourceId, setSwapSourceId] = useState(null);
       const [confirmDeleteId, setConfirmDeleteId] = useState(null); 
+      const [currentTimeStr, setCurrentTimeStr] = useState('');
 
       const activeAudioNodes = useRef({});
       const fileInputRefs = useRef([]);
       const projectInputRef = useRef(null);
+      const padsRef = useRef(pads); // For accessing latest pads in interval
 
+      // Update padsRef whenever pads change
+      useEffect(() => {
+        padsRef.current = pads;
+      }, [pads]);
+
+      // Clock & Timer Logic
+      useEffect(() => {
+        const interval = setInterval(() => {
+          const now = new Date();
+          // Get JST Time string HH:mm:ss
+          const timeString = now.toLocaleTimeString('ja-JP', { 
+            timeZone: 'Asia/Tokyo', 
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          });
+          setCurrentTimeStr(timeString);
+
+          // Check Triggers
+          if (isReady && audioCtx) {
+            padsRef.current.forEach(pad => {
+              if (pad.settings.enableTrigger && pad.settings.triggerTime) {
+                // triggerTime format is usually HH:mm, we need to match seconds or append :00
+                // Input type="time" with step="1" gives HH:mm:ss. If step not set or minutes, gives HH:mm.
+                // We'll assume strict string match for now.
+                // Note: input type="time" values are usually like "14:30" or "14:30:00".
+                let triggerTarget = pad.settings.triggerTime;
+                if (triggerTarget.length === 5) triggerTarget += ":00"; // Add seconds if missing
+
+                if (triggerTarget === timeString) {
+                  // Trigger! But ensure we don't trigger multiple times in same second
+                  // Simple way: activeAudioNodes check is done in triggerPad, but we need to ensure
+                  // we call the function.
+                  // IMPORTANT: triggerPad relies on state/refs. We need a way to call it.
+                  // Since triggerPad is wrapped in useCallback with deps, we can't call it easily from here
+                  // without adding it to dependencies, which resets interval.
+                  // Solution: Dispatch a custom event or use a ref for the trigger function.
+                  triggerPadFromTimer(pad.id);
+                }
+              }
+            });
+          }
+        }, 1000);
+        return () => clearInterval(interval);
+      }, [isReady, audioCtx]); // Reduced dependencies
+
+      // We need a ref to hold the latest triggerPad function to call it from the interval
+      const triggerPadRef = useRef(null);
+
+      // Load data
       useEffect(() => {
         const loadPads = async () => {
           try {
@@ -156,8 +213,19 @@
             for (let i = 0; i < currentCount; i++) {
               const data = await idbKeyval.get(`pad_${i}`);
               if (data) {
-                const settings = { loop: false, ...data.settings };
-                loadedPads[i] = { ...loadedPads[i], ...data, settings, buffer: null, url: data.blob ? URL.createObjectURL(data.blob) : null };
+                const settings = { 
+                  loop: false, 
+                  enableTrigger: false, 
+                  triggerTime: '', 
+                  ...data.settings 
+                };
+                loadedPads[i] = { 
+                  ...loadedPads[i], 
+                  ...data, 
+                  settings, 
+                  buffer: null, 
+                  url: data.blob ? URL.createObjectURL(data.blob) : null 
+                };
                 hasData = true;
               }
             }
@@ -197,7 +265,7 @@
          for (let i = start; i < end; i++) {
             const data = await idbKeyval.get(`pad_${i}`);
             if (data) {
-               const settings = { loop: false, ...data.settings };
+               const settings = { loop: false, enableTrigger: false, triggerTime: '', ...data.settings };
                newPads[i] = { ...newPads[i], ...data, settings, buffer: null, url: data.blob ? URL.createObjectURL(data.blob) : null };
                if (audioCtx && data.blob) {
                   try {
@@ -236,7 +304,7 @@
         if (activeAudioNodes.current[padId]) stopPad(padId, 'CUT');
         setPads(prev => {
           const newPads = [...prev];
-          newPads[padId] = { id: padId, keyTrigger: KEY_MAP[padId], name: `Pad ${padId + 1}`, color: COLORS[padId], buffer: null, blob: null, url: null, settings: { start: 0, end: 1, fadeIn: 0, fadeOut: 0, volume: 1, loop: false } };
+          newPads[padId] = { id: padId, keyTrigger: KEY_MAP[padId], name: `Pad ${padId + 1}`, color: COLORS[padId], buffer: null, blob: null, url: null, settings: { start: 0, end: 1, fadeIn: 0, fadeOut: 0, volume: 1, loop: false, enableTrigger: false, triggerTime: '' } };
           return newPads;
         });
         try { await idbKeyval.del(`pad_${padId}`); } catch (e) { console.error(e); }
@@ -314,7 +382,7 @@
           await Promise.all(metadata.pads.map(async (padMeta) => {
             const index = padMeta.id;
             if (index >= 0 && index < count) {
-              const settings = { loop: false, ...padMeta.settings };
+              const settings = { loop: false, enableTrigger: false, triggerTime: '', ...padMeta.settings };
               newPads[index] = { ...newPads[index], name: padMeta.name, settings };
               if (padMeta.hasAudio && padMeta.fileName) {
                 const audioBlob = await zip.file(padMeta.fileName).async("blob");
@@ -358,11 +426,32 @@
       };
 
       const triggerPad = useCallback((padId) => {
-        if (isEditMode) return;
-        const pad = pads[padId];
-        if (!pad.buffer || !audioCtx) return;
+        // if (isEditMode) return; // Allow timer to trigger even in edit mode? Maybe safer not to block.
+        const pad = padsRef.current[padId]; // Use ref to get latest pad data inside interval/callbacks
+        if (!pad || !pad.buffer || !audioCtx) return;
+        
         const now = audioCtx.currentTime;
-        if (activeAudioNodes.current[padId]) { stopPad(padId, transitionMode, crossfadeDuration); return; }
+        
+        // If already playing, stop it (or handle transition)
+        if (activeAudioNodes.current[padId]) { 
+           // If called by timer, we might want to restart? 
+           // For now standard toggle behavior: stop. 
+           // BUT for timer, we probably want to start. 
+           // Let's stick to standard behavior: Toggle. 
+           // Wait, if timer fires and it's playing, it stops? That might be unintended.
+           // Let's force play if it's not playing? 
+           // Actually, existing logic is: if playing, stop.
+           // If we want re-trigger, we should stop then start.
+           stopPad(padId, transitionMode, crossfadeDuration); 
+           // return; // Don't return if we want re-trigger logic, but standard is toggle.
+           // For Timer, we usually want to START.
+           // Let's modify: If triggered by timer (we can't easily tell here), we might want force start.
+           // For simplicity, let's keep toggle. 
+           // If it's already playing, timer stops it.
+           // If user wants loop, they use loop setting.
+           return; 
+        }
+        
         Object.keys(activeAudioNodes.current).forEach((activeId) => {
           if (parseInt(activeId) !== padId) stopPad(parseInt(activeId), transitionMode, crossfadeDuration);
         });
@@ -401,7 +490,25 @@
             setPlayingPads(prev => { const n = { ...prev }; delete n[padId]; return n; });
           }
         };
-      }, [audioCtx, pads, transitionMode, crossfadeDuration, stopPad, isEditMode]);
+      }, [audioCtx, transitionMode, crossfadeDuration, stopPad]); // Remove pads from dependency, use ref
+
+      // Separate function for Timer to force Start if needed, or just reuse triggerPad
+      const triggerPadFromTimer = (padId) => {
+         // Check if already playing
+         if (activeAudioNodes.current[padId]) {
+            // Already playing, do nothing? Or Restart?
+            // Usually timer implies "Start at this time". 
+            // If playing, maybe let it continue or restart.
+            // Let's do nothing if already playing to avoid double triggers.
+            return;
+         }
+         triggerPad(padId);
+      };
+
+      // Sync ref for timer
+      useEffect(() => {
+         triggerPadRef.current = triggerPadFromTimer;
+      }, [triggerPad]); // Dependencies
 
       const handleFileUpload = async (e, index) => {
         const file = e.target.files[0];
@@ -460,7 +567,14 @@
         <div className="flex flex-col h-screen bg-slate-900 text-slate-100 overflow-hidden select-none">
           <header className="flex flex-col gap-2 px-4 py-3 bg-slate-800 border-b border-slate-700 shadow-md z-10">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2"><Music className="text-blue-400" /><h1 className="text-lg sm:text-xl font-bold tracking-tight">T-PAD</h1></div>
+              <div className="flex items-center gap-2">
+                <Music className="text-blue-400" />
+                <h1 className="text-lg sm:text-xl font-bold tracking-tight">T-PAD</h1>
+                {/* Clock Display */}
+                <div className="bg-black/30 text-slate-300 text-xs px-2 py-1 rounded font-mono border border-slate-600 ml-2">
+                   {currentTimeStr || "--:--:--"}
+                </div>
+              </div>
               <div className="flex items-center gap-2">
                  <button onClick={togglePadCount} disabled={isProcessing} className="flex items-center gap-1 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-bold text-slate-300 disabled:opacity-30 mr-2" title="パッド数を切替"><Grid size={14} /> {padCount}</button>
                  <button onClick={() => { setIsEditMode(!isEditMode); setSwapSourceId(null); }} className={`flex items-center gap-1 px-3 py-1.5 rounded text-xs font-bold transition-colors ${isEditMode ? 'bg-amber-600 text-white animate-pulse' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}><Edit3 size={14} /> {isEditMode ? 'EDIT中' : 'EDIT'}</button>
@@ -624,7 +738,12 @@
           onPointerDown={handlePointer} onClick={handlePointer}
         >
           {playingInfo && <div className="absolute bottom-0 left-0 h-full bg-white/20 pointer-events-none transition-all duration-75 ease-linear" ref={progressRef} style={{width: '0%'}}></div>}
-          {pad.settings.loop && hasAudio && !isEditMode && <div className="absolute top-2 left-2 text-white/50 pointer-events-none"><Repeat size={14} /></div>}
+          {/* Icons top left: Loop and Timer */}
+          <div className="absolute top-2 left-2 flex gap-1 pointer-events-none text-white/50">
+             {pad.settings.loop && hasAudio && !isEditMode && <Repeat size={14} />}
+             {pad.settings.enableTrigger && hasAudio && !isEditMode && <Timer size={14} className="text-yellow-400" />}
+          </div>
+
           <div className="flex flex-col items-center justify-center h-full p-2 sm:p-4 pointer-events-none select-none relative z-10">
             <span className="absolute top-1 left-2 font-mono text-xl sm:text-2xl font-bold opacity-50 text-black/40">{isEditMode ? '' : pad.keyTrigger}</span>
             {!hasAudio ? (
@@ -634,6 +753,12 @@
                  <div className="font-bold text-sm sm:text-lg text-white drop-shadow-md break-all line-clamp-2 leading-tight px-1 mb-1">{pad.name}</div>
                  {!isEditMode && (<div className="flex items-center justify-center gap-1 text-[10px] sm:text-[12px] font-mono font-bold bg-black/30 rounded-full px-3 py-1 mx-auto w-fit text-white border border-white/20 shadow-sm"><Clock size={10} className="sm:w-3 sm:h-3" /> <span ref={timeDisplayRef}>{formatDuration(totalDuration)}</span></div>)}
                  {playingInfo && (<div className="absolute bottom-1 left-0 right-0 flex justify-center"><div className="animate-pulse text-[8px] sm:text-[10px] font-bold uppercase tracking-wider text-white/80">PLAYING</div></div>)}
+                 {/* Timer Info Display */}
+                 {!isEditMode && pad.settings.enableTrigger && !playingInfo && (
+                    <div className="absolute bottom-1 left-0 right-0 flex justify-center text-[9px] text-yellow-300 font-mono bg-black/40 w-fit mx-auto px-1 rounded">
+                       @{pad.settings.triggerTime}
+                    </div>
+                 )}
               </div>
             )}
           </div>
@@ -878,6 +1003,31 @@
                     </button>
                   </div>
 
+                  {/* --- Timer Trigger --- */}
+                  <div className="bg-slate-900/50 p-2 rounded mb-2 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-300 flex items-center gap-1"><Timer size={14} className="text-yellow-400" /> タイマー再生</span>
+                      <button 
+                        onClick={() => onUpdate({ enableTrigger: !pad.settings.enableTrigger })}
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors touch-manipulation ${pad.settings.enableTrigger ? 'bg-yellow-600' : 'bg-slate-600'}`}
+                      >
+                        <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${pad.settings.enableTrigger ? 'translate-x-5' : 'translate-x-1'}`} />
+                      </button>
+                    </div>
+                    {pad.settings.enableTrigger && (
+                      <div className="flex items-center justify-between text-sm">
+                         <span className="text-slate-400 text-xs">開始時刻(JST/端末)</span>
+                         <input 
+                            type="time" 
+                            step="1"
+                            value={pad.settings.triggerTime || ''}
+                            onChange={(e) => onUpdate({ triggerTime: e.target.value })}
+                            className="bg-slate-800 text-white border border-slate-600 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+                         />
+                      </div>
+                    )}
+                  </div>
+
                   <div className="flex gap-4">
                     <div className="flex-1 space-y-1"><div className="flex justify-between text-xs"><span>フェードイン</span><span>{pad.settings.fadeIn}s</span></div><input type="range" min="0" max="2" step="0.1" value={pad.settings.fadeIn} onChange={(e) => onUpdate({ fadeIn: parseFloat(e.target.value) })} className="w-full accent-blue-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer touch-none p-2" /></div>
                     <div className="flex-1 space-y-1"><div className="flex justify-between text-xs"><span>フェードアウト</span><span>{pad.settings.fadeOut}s</span></div><input type="range" min="0" max="2" step="0.1" value={pad.settings.fadeOut} onChange={(e) => onUpdate({ fadeOut: parseFloat(e.target.value) })} className="w-full accent-blue-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer touch-none p-2" /></div>
@@ -917,7 +1067,7 @@
                      </button>
                      <button 
                        onClick={() => {
-                         onUpdate({ start: 0, end: 1, fadeIn: 0, fadeOut: 0, volume: 1, loop: false });
+                         onUpdate({ start: 0, end: 1, fadeIn: 0, fadeOut: 0, volume: 1, loop: false, enableTrigger: false, triggerTime: '' });
                          setShowResetConfirm(false);
                        }}
                        className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 text-white text-sm font-bold shadow-lg transition-colors"
