@@ -170,21 +170,10 @@
           if (isReady && audioCtx) {
             padsRef.current.forEach(pad => {
               if (pad.settings.enableTrigger && pad.settings.triggerTime) {
-                // triggerTime format is usually HH:mm, we need to match seconds or append :00
-                // Input type="time" with step="1" gives HH:mm:ss. If step not set or minutes, gives HH:mm.
-                // We'll assume strict string match for now.
-                // Note: input type="time" values are usually like "14:30" or "14:30:00".
                 let triggerTarget = pad.settings.triggerTime;
-                if (triggerTarget.length === 5) triggerTarget += ":00"; // Add seconds if missing
+                if (triggerTarget.length === 5) triggerTarget += ":00"; 
 
                 if (triggerTarget === timeString) {
-                  // Trigger! But ensure we don't trigger multiple times in same second
-                  // Simple way: activeAudioNodes check is done in triggerPad, but we need to ensure
-                  // we call the function.
-                  // IMPORTANT: triggerPad relies on state/refs. We need a way to call it.
-                  // Since triggerPad is wrapped in useCallback with deps, we can't call it easily from here
-                  // without adding it to dependencies, which resets interval.
-                  // Solution: Dispatch a custom event or use a ref for the trigger function.
                   triggerPadFromTimer(pad.id);
                 }
               }
@@ -192,7 +181,7 @@
           }
         }, 1000);
         return () => clearInterval(interval);
-      }, [isReady, audioCtx]); // Reduced dependencies
+      }, [isReady, audioCtx]); 
 
       // We need a ref to hold the latest triggerPad function to call it from the interval
       const triggerPadRef = useRef(null);
@@ -426,29 +415,13 @@
       };
 
       const triggerPad = useCallback((padId) => {
-        // if (isEditMode) return; // Allow timer to trigger even in edit mode? Maybe safer not to block.
-        const pad = padsRef.current[padId]; // Use ref to get latest pad data inside interval/callbacks
+        const pad = padsRef.current[padId]; 
         if (!pad || !pad.buffer || !audioCtx) return;
         
         const now = audioCtx.currentTime;
         
-        // If already playing, stop it (or handle transition)
         if (activeAudioNodes.current[padId]) { 
-           // If called by timer, we might want to restart? 
-           // For now standard toggle behavior: stop. 
-           // BUT for timer, we probably want to start. 
-           // Let's stick to standard behavior: Toggle. 
-           // Wait, if timer fires and it's playing, it stops? That might be unintended.
-           // Let's force play if it's not playing? 
-           // Actually, existing logic is: if playing, stop.
-           // If we want re-trigger, we should stop then start.
            stopPad(padId, transitionMode, crossfadeDuration); 
-           // return; // Don't return if we want re-trigger logic, but standard is toggle.
-           // For Timer, we usually want to START.
-           // Let's modify: If triggered by timer (we can't easily tell here), we might want force start.
-           // For simplicity, let's keep toggle. 
-           // If it's already playing, timer stops it.
-           // If user wants loop, they use loop setting.
            return; 
         }
         
@@ -490,25 +463,18 @@
             setPlayingPads(prev => { const n = { ...prev }; delete n[padId]; return n; });
           }
         };
-      }, [audioCtx, transitionMode, crossfadeDuration, stopPad]); // Remove pads from dependency, use ref
+      }, [audioCtx, transitionMode, crossfadeDuration, stopPad]); 
 
-      // Separate function for Timer to force Start if needed, or just reuse triggerPad
       const triggerPadFromTimer = (padId) => {
-         // Check if already playing
          if (activeAudioNodes.current[padId]) {
-            // Already playing, do nothing? Or Restart?
-            // Usually timer implies "Start at this time". 
-            // If playing, maybe let it continue or restart.
-            // Let's do nothing if already playing to avoid double triggers.
             return;
          }
          triggerPad(padId);
       };
 
-      // Sync ref for timer
       useEffect(() => {
          triggerPadRef.current = triggerPadFromTimer;
-      }, [triggerPad]); // Dependencies
+      }, [triggerPad]);
 
       const handleFileUpload = async (e, index) => {
         const file = e.target.files[0];
@@ -567,14 +533,7 @@
         <div className="flex flex-col h-screen bg-slate-900 text-slate-100 overflow-hidden select-none">
           <header className="flex flex-col gap-2 px-4 py-3 bg-slate-800 border-b border-slate-700 shadow-md z-10">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Music className="text-blue-400" />
-                <h1 className="text-lg sm:text-xl font-bold tracking-tight">T-PAD</h1>
-                {/* Clock Display */}
-                <div className="bg-black/30 text-slate-300 text-xs px-2 py-1 rounded font-mono border border-slate-600 ml-2">
-                   {currentTimeStr || "--:--:--"}
-                </div>
-              </div>
+              <div className="flex items-center gap-2"><Music className="text-blue-400" /><h1 className="text-lg sm:text-xl font-bold tracking-tight">T-PAD</h1></div>
               <div className="flex items-center gap-2">
                  <button onClick={togglePadCount} disabled={isProcessing} className="flex items-center gap-1 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-bold text-slate-300 disabled:opacity-30 mr-2" title="パッド数を切替"><Grid size={14} /> {padCount}</button>
                  <button onClick={() => { setIsEditMode(!isEditMode); setSwapSourceId(null); }} className={`flex items-center gap-1 px-3 py-1.5 rounded text-xs font-bold transition-colors ${isEditMode ? 'bg-amber-600 text-white animate-pulse' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}><Edit3 size={14} /> {isEditMode ? 'EDIT中' : 'EDIT'}</button>
@@ -776,6 +735,9 @@
       const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
       const previewSourceRef = useRef(null);
       const [showResetConfirm, setShowResetConfirm] = useState(false);
+      
+      const previewStartTimeRef = useRef(0);
+      const animationRef = useRef(null);
 
       const totalDuration = pad.buffer ? pad.buffer.duration : 0;
 
@@ -787,6 +749,7 @@
             previewSourceRef.current = null;
           }
           setIsPreviewPlaying(false);
+          if(animationRef.current) cancelAnimationFrame(animationRef.current);
         } else {
           if (!pad.buffer || !audioCtx) return;
           const source = audioCtx.createBufferSource();
@@ -821,10 +784,13 @@
           }
 
           previewSourceRef.current = source;
+          previewStartTimeRef.current = now;
+          
           setIsPreviewPlaying(true);
           source.onended = () => {
             setIsPreviewPlaying(false);
             previewSourceRef.current = null;
+            if(animationRef.current) cancelAnimationFrame(animationRef.current);
           };
         }
       };
@@ -834,6 +800,7 @@
           if (previewSourceRef.current) {
             try { previewSourceRef.current.stop(); } catch(e) {}
           }
+          if(animationRef.current) cancelAnimationFrame(animationRef.current);
         };
       }, []);
 
@@ -892,54 +859,120 @@
         if(e.target) e.target.releasePointerCapture(e.pointerId);
       };
 
+      // Main render loop
       useEffect(() => {
-        if (!pad.buffer || !canvasRef.current) return;
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d');
-        const width = canvas.width;
-        const height = canvas.height;
-        ctx.clearRect(0, 0, width, height);
-        ctx.fillStyle = '#1e293b'; ctx.fillRect(0, 0, width, height);
-        const data = pad.buffer.getChannelData(0);
-        const totalSamples = data.length;
-        const viewSizeSamples = Math.floor(totalSamples / zoomX);
-        const maxScrollSamples = totalSamples - viewSizeSamples;
-        const startSample = Math.floor(scrollPos * maxScrollSamples);
-        const endSample = startSample + viewSizeSamples;
-        const step = Math.ceil(viewSizeSamples / width);
-        const amp = (height / 2);
-        ctx.fillStyle = '#60a5fa'; ctx.beginPath();
-        for (let i = 0; i < width; i++) {
-          let min = 1.0, max = -1.0;
-          const sampleIndexStart = startSample + (i * step);
-          for (let j = 0; j < step; j++) {
-            const idx = sampleIndexStart + j;
-            if (idx < endSample && idx < totalSamples) {
-              let datum = data[idx] * zoomY;
-              if (datum < -1) datum = -1;
-              if (datum > 1) datum = 1;
-              if (datum < min) min = datum;
-              if (datum > max) max = datum;
+        const render = () => {
+            if (!pad.buffer || !canvasRef.current) return;
+            const canvas = canvasRef.current;
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+            const totalSamples = pad.buffer.length;
+            
+            // 1. Clear
+            ctx.clearRect(0, 0, width, height);
+            ctx.fillStyle = '#1e293b'; 
+            ctx.fillRect(0, 0, width, height);
+            
+            // 2. Draw Waveform
+            const data = pad.buffer.getChannelData(0);
+            const viewSizeSamples = Math.floor(totalSamples / zoomX);
+            const maxScrollSamples = totalSamples - viewSizeSamples;
+            const startSample = Math.floor(scrollPos * maxScrollSamples);
+            const endSample = startSample + viewSizeSamples;
+            const step = Math.ceil(viewSizeSamples / width);
+            const amp = (height / 2);
+            
+            ctx.fillStyle = '#60a5fa'; 
+            ctx.beginPath();
+            for (let i = 0; i < width; i++) {
+                let min = 1.0, max = -1.0;
+                const sampleIndexStart = startSample + (i * step);
+                for (let j = 0; j < step; j++) {
+                    const idx = sampleIndexStart + j;
+                    if (idx < endSample && idx < totalSamples) {
+                        let datum = data[idx] * zoomY;
+                        if (datum < -1) datum = -1;
+                        if (datum > 1) datum = 1;
+                        if (datum < min) min = datum;
+                        if (datum > max) max = datum;
+                    }
+                }
+                if (min > max) { min = 0; max = 0; }
+                const y1 = (1 + min) * amp;
+                const y2 = (1 + max) * amp;
+                ctx.fillRect(i, y1, 1, Math.max(1, y2 - y1));
             }
-          }
-          if (min > max) { min = 0; max = 0; }
-          const y1 = (1 + min) * amp; const y2 = (1 + max) * amp;
-          ctx.fillRect(i, y1, 1, Math.max(1, y2 - y1));
-        }
-        const startX = getScreenX(pad.settings.start, width, totalSamples);
-        const endX = getScreenX(pad.settings.end, width, totalSamples);
-        ctx.fillStyle = 'rgba(0,0,0,0.6)';
-        if (startX > 0) ctx.fillRect(0, 0, Math.min(width, startX), height);
-        if (endX < width) ctx.fillRect(Math.max(0, endX), 0, width - Math.max(0, endX), height);
-        const drawLine = (x, color, isHovered) => {
-          if (x < -5 || x > width + 5) return;
-          ctx.strokeStyle = color; ctx.lineWidth = isHovered ? 4 : 2;
-          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
-          ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, 10, isHovered ? 6 : 4, 0, Math.PI * 2); ctx.fill();
+            
+            // 3. Draw Start/End Markers & Mask
+            const startX = getScreenX(pad.settings.start, width, totalSamples);
+            const endX = getScreenX(pad.settings.end, width, totalSamples);
+            
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            if (startX > 0) ctx.fillRect(0, 0, Math.min(width, startX), height);
+            if (endX < width) ctx.fillRect(Math.max(0, endX), 0, width - Math.max(0, endX), height);
+            
+            const drawLine = (x, color, isHovered) => {
+                if (x < -5 || x > width + 5) return;
+                ctx.strokeStyle = color; 
+                ctx.lineWidth = isHovered ? 4 : 2;
+                ctx.beginPath(); 
+                ctx.moveTo(x, 0); 
+                ctx.lineTo(x, height); 
+                ctx.stroke();
+                ctx.fillStyle = color; 
+                ctx.beginPath(); 
+                ctx.arc(x, 10, isHovered ? 6 : 4, 0, Math.PI * 2); 
+                ctx.fill();
+            };
+            
+            drawLine(startX, '#22c55e', draggingHandle === 'start' || hoverHandle === 'start');
+            drawLine(endX, '#ef4444', draggingHandle === 'end' || hoverHandle === 'end');
+
+            // 4. Draw Playhead if previewing
+            if (isPreviewPlaying && pad.buffer) {
+                const now = audioCtx.currentTime;
+                const duration = pad.buffer.duration;
+                const playStart = pad.settings.start * duration;
+                const playEnd = pad.settings.end * duration;
+                const playLength = playEnd - playStart;
+                
+                const elapsed = now - previewStartTimeRef.current;
+                let currentPosRatio = 0;
+
+                if (pad.settings.loop) {
+                    const loopOffset = elapsed % playLength;
+                    currentPosRatio = (playStart + loopOffset) / duration;
+                } else {
+                    currentPosRatio = (playStart + elapsed) / duration;
+                }
+                
+                // Ensure we don't draw past end if not looping
+                if (currentPosRatio <= pad.settings.end + 0.001) { // slight tolerance
+                    const playheadX = getScreenX(currentPosRatio, width, totalSamples);
+                    
+                    if (playheadX >= 0 && playheadX <= width) {
+                        ctx.strokeStyle = '#ffffff';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(playheadX, 0);
+                        ctx.lineTo(playheadX, height);
+                        ctx.stroke();
+                    }
+                }
+                
+                animationRef.current = requestAnimationFrame(render);
+            }
         };
-        drawLine(startX, '#22c55e', draggingHandle === 'start' || hoverHandle === 'start');
-        drawLine(endX, '#ef4444', draggingHandle === 'end' || hoverHandle === 'end');
-      }, [pad, zoomX, zoomY, scrollPos, draggingHandle, hoverHandle, getScreenX]);
+
+        render();
+        // Cleanup inside useEffect is tricky with RAF loop that depends on state.
+        // We rely on the dependencies change to re-trigger or stop.
+        // Ideally use a stable ref for the loop.
+        return () => {
+            if (animationRef.current) cancelAnimationFrame(animationRef.current);
+        };
+      }, [pad, zoomX, zoomY, scrollPos, draggingHandle, hoverHandle, isPreviewPlaying, getScreenX, audioCtx]);
 
       return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
