@@ -57,6 +57,16 @@
       background: #475569;
       border-radius: 2px;
     }
+    
+    /* Number input styling */
+    input[type=number]::-webkit-inner-spin-button, 
+    input[type=number]::-webkit-outer-spin-button { 
+      -webkit-appearance: none; 
+      margin: 0; 
+    }
+    input[type=number] {
+      -moz-appearance: textfield;
+    }
   </style>
 </head>
 <body class="bg-slate-900 text-white h-screen overflow-hidden">
@@ -145,9 +155,8 @@
       const activeAudioNodes = useRef({});
       const fileInputRefs = useRef([]);
       const projectInputRef = useRef(null);
-      const padsRef = useRef(pads); // For accessing latest pads in interval
+      const padsRef = useRef(pads); 
 
-      // Update padsRef whenever pads change
       useEffect(() => {
         padsRef.current = pads;
       }, [pads]);
@@ -156,23 +165,16 @@
       useEffect(() => {
         const interval = setInterval(() => {
           const now = new Date();
-          // Get JST Time string HH:mm:ss
           const timeString = now.toLocaleTimeString('ja-JP', { 
-            timeZone: 'Asia/Tokyo', 
-            hour12: false,
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
+            timeZone: 'Asia/Tokyo', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'
           });
           setCurrentTimeStr(timeString);
 
-          // Check Triggers
           if (isReady && audioCtx) {
             padsRef.current.forEach(pad => {
               if (pad.settings.enableTrigger && pad.settings.triggerTime) {
                 let triggerTarget = pad.settings.triggerTime;
                 if (triggerTarget.length === 5) triggerTarget += ":00"; 
-
                 if (triggerTarget === timeString) {
                   triggerPadFromTimer(pad.id);
                 }
@@ -183,10 +185,8 @@
         return () => clearInterval(interval);
       }, [isReady, audioCtx]); 
 
-      // We need a ref to hold the latest triggerPad function to call it from the interval
       const triggerPadRef = useRef(null);
 
-      // Load data
       useEffect(() => {
         const loadPads = async () => {
           try {
@@ -203,18 +203,9 @@
               const data = await idbKeyval.get(`pad_${i}`);
               if (data) {
                 const settings = { 
-                  loop: false, 
-                  enableTrigger: false, 
-                  triggerTime: '', 
-                  ...data.settings 
+                  loop: false, enableTrigger: false, triggerTime: '', ...data.settings 
                 };
-                loadedPads[i] = { 
-                  ...loadedPads[i], 
-                  ...data, 
-                  settings, 
-                  buffer: null, 
-                  url: data.blob ? URL.createObjectURL(data.blob) : null 
-                };
+                loadedPads[i] = { ...loadedPads[i], ...data, settings, buffer: null, url: data.blob ? URL.createObjectURL(data.blob) : null };
                 hasData = true;
               }
             }
@@ -735,11 +726,39 @@
       const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
       const previewSourceRef = useRef(null);
       const [showResetConfirm, setShowResetConfirm] = useState(false);
-      
+      const [seekPos, setSeekPos] = useState(null); 
+      const previewTimeRef = useRef(null); // Ref for time text update
+
       const previewStartTimeRef = useRef(0);
       const animationRef = useRef(null);
 
       const totalDuration = pad.buffer ? pad.buffer.duration : 0;
+
+      // Convert Gain to dB
+      const toDB = (gain) => {
+        if (gain <= 0.0001) return -100;
+        return (20 * Math.log10(gain));
+      };
+
+      // Convert dB to Gain
+      const fromDB = (db) => {
+        if (db <= -100) return 0;
+        return Math.pow(10, db / 20);
+      };
+
+      const handleTimeChange = (type, secondsStr) => {
+         const seconds = parseFloat(secondsStr);
+         if (isNaN(seconds)) return;
+         let ratio = seconds / totalDuration;
+         if (ratio < 0) ratio = 0;
+         if (ratio > 1) ratio = 1;
+         
+         if (type === 'start') {
+            if (ratio < pad.settings.end) onUpdate({ start: ratio });
+         } else {
+            if (ratio > pad.settings.start) onUpdate({ end: ratio });
+         }
+      };
 
       // Preview Logic
       const togglePreview = () => {
@@ -751,7 +770,18 @@
           setIsPreviewPlaying(false);
           if(animationRef.current) cancelAnimationFrame(animationRef.current);
         } else {
+          startPreview(null);
+        }
+      };
+
+      const startPreview = (startRatio = null) => {
           if (!pad.buffer || !audioCtx) return;
+
+          if (previewSourceRef.current) {
+             try { previewSourceRef.current.stop(); } catch(e){}
+             previewSourceRef.current = null;
+          }
+
           const source = audioCtx.createBufferSource();
           source.buffer = pad.buffer;
           const gainNode = audioCtx.createGain();
@@ -759,40 +789,51 @@
           gainNode.connect(audioCtx.destination);
           
           const now = audioCtx.currentTime;
-          const startTime = pad.settings.start * totalDuration;
-          const endTime = pad.settings.end * totalDuration;
-          const playDuration = Math.max(0, endTime - startTime);
+          
+          let playStartRatio = startRatio !== null ? startRatio : (seekPos !== null ? seekPos : pad.settings.start);
+          if (playStartRatio < 0) playStartRatio = 0;
+          if (playStartRatio > 1) playStartRatio = 0;
+
+          const startTimeOffset = playStartRatio * totalDuration;
+          const settingsStart = pad.settings.start * totalDuration;
+          const settingsEnd = pad.settings.end * totalDuration;
 
           gainNode.gain.value = pad.settings.volume;
-          if (pad.settings.fadeIn > 0) {
+          
+          if (Math.abs(playStartRatio - pad.settings.start) < 0.01 && pad.settings.fadeIn > 0) {
             gainNode.gain.setValueAtTime(0, now);
-            gainNode.gain.linearRampToValueAtTime(pad.settings.volume, now + Math.min(pad.settings.fadeIn, playDuration));
+            gainNode.gain.linearRampToValueAtTime(pad.settings.volume, now + Math.min(pad.settings.fadeIn, (settingsEnd - startTimeOffset)));
           }
+          
           if (!pad.settings.loop && pad.settings.fadeOut > 0) {
+             const playDuration = Math.max(0, settingsEnd - startTimeOffset);
              const fadeOutStart = now + playDuration - pad.settings.fadeOut;
-             gainNode.gain.setValueAtTime(pad.settings.volume, Math.max(now, fadeOutStart));
-             gainNode.gain.linearRampToValueAtTime(0, now + playDuration);
+             if (fadeOutStart > now) {
+                 gainNode.gain.setValueAtTime(pad.settings.volume, fadeOutStart);
+                 gainNode.gain.linearRampToValueAtTime(0, now + playDuration);
+             }
           }
 
           source.loop = pad.settings.loop;
           if (pad.settings.loop) {
-            source.loopStart = startTime;
-            source.loopEnd = endTime;
-            source.start(now, startTime);
-          } else {
-            source.start(now, startTime, playDuration);
+            source.loopStart = settingsStart;
+            source.loopEnd = settingsEnd;
+          }
+
+          source.start(now, startTimeOffset);
+          
+          if (!pad.settings.loop) {
+             const durationToPlay = Math.max(0, settingsEnd - startTimeOffset);
+             source.stop(now + durationToPlay);
           }
 
           previewSourceRef.current = source;
-          previewStartTimeRef.current = now;
+          previewStartTimeRef.current = now - startTimeOffset;
           
           setIsPreviewPlaying(true);
           source.onended = () => {
-            setIsPreviewPlaying(false);
-            previewSourceRef.current = null;
-            if(animationRef.current) cancelAnimationFrame(animationRef.current);
+            // Ended naturally (or stopped manually - handled by state toggle)
           };
-        }
       };
 
       useEffect(() => {
@@ -830,8 +871,18 @@
         const startX = getScreenX(pad.settings.start, width, totalSamples);
         const endX = getScreenX(pad.settings.end, width, totalSamples);
         const threshold = 50; 
+        
         if (Math.abs(x - startX) < threshold) { setDraggingHandle('start'); e.target.setPointerCapture(e.pointerId); }
         else if (Math.abs(x - endX) < threshold) { setDraggingHandle('end'); e.target.setPointerCapture(e.pointerId); }
+        else {
+           const clickRatio = getNormalizedFromScreenX(x, width, totalSamples);
+           setSeekPos(clickRatio);
+           if (isPreviewPlaying) {
+              startPreview(clickRatio);
+           }
+           setDraggingHandle('seek');
+           e.target.setPointerCapture(e.pointerId);
+        }
       };
 
       const handlePointerMove = (e) => {
@@ -843,7 +894,8 @@
         if (draggingHandle) {
           const newVal = getNormalizedFromScreenX(x, width, totalSamples);
           if (draggingHandle === 'start') { if (newVal < pad.settings.end) onUpdate({ start: newVal }); }
-          else { if (newVal > pad.settings.start) onUpdate({ end: newVal }); }
+          else if (draggingHandle === 'end') { if (newVal > pad.settings.start) onUpdate({ end: newVal }); }
+          else if (draggingHandle === 'seek') { setSeekPos(newVal); }
           return;
         }
         const startX = getScreenX(pad.settings.start, width, totalSamples);
@@ -855,11 +907,13 @@
       };
 
       const handlePointerUp = (e) => {
+        if (draggingHandle === 'seek') {
+           if (isPreviewPlaying) { startPreview(seekPos); }
+        }
         setDraggingHandle(null);
         if(e.target) e.target.releasePointerCapture(e.pointerId);
       };
 
-      // Main render loop
       useEffect(() => {
         const render = () => {
             if (!pad.buffer || !canvasRef.current) return;
@@ -868,13 +922,8 @@
             const width = canvas.width;
             const height = canvas.height;
             const totalSamples = pad.buffer.length;
-            
-            // 1. Clear
             ctx.clearRect(0, 0, width, height);
-            ctx.fillStyle = '#1e293b'; 
-            ctx.fillRect(0, 0, width, height);
-            
-            // 2. Draw Waveform
+            ctx.fillStyle = '#1e293b'; ctx.fillRect(0, 0, width, height);
             const data = pad.buffer.getChannelData(0);
             const viewSizeSamples = Math.floor(totalSamples / zoomX);
             const maxScrollSamples = totalSamples - viewSizeSamples;
@@ -883,15 +932,17 @@
             const step = Math.ceil(viewSizeSamples / width);
             const amp = (height / 2);
             
-            ctx.fillStyle = '#60a5fa'; 
-            ctx.beginPath();
+            // Volume factor for visualization
+            const volume = pad.settings.volume; 
+
+            ctx.fillStyle = '#60a5fa'; ctx.beginPath();
             for (let i = 0; i < width; i++) {
                 let min = 1.0, max = -1.0;
                 const sampleIndexStart = startSample + (i * step);
                 for (let j = 0; j < step; j++) {
                     const idx = sampleIndexStart + j;
                     if (idx < endSample && idx < totalSamples) {
-                        let datum = data[idx] * zoomY;
+                        let datum = data[idx] * zoomY * volume; // Volume reflected here
                         if (datum < -1) datum = -1;
                         if (datum > 1) datum = 1;
                         if (datum < min) min = datum;
@@ -899,80 +950,76 @@
                     }
                 }
                 if (min > max) { min = 0; max = 0; }
-                const y1 = (1 + min) * amp;
-                const y2 = (1 + max) * amp;
+                const y1 = (1 + min) * amp; const y2 = (1 + max) * amp;
                 ctx.fillRect(i, y1, 1, Math.max(1, y2 - y1));
             }
             
-            // 3. Draw Start/End Markers & Mask
             const startX = getScreenX(pad.settings.start, width, totalSamples);
             const endX = getScreenX(pad.settings.end, width, totalSamples);
-            
             ctx.fillStyle = 'rgba(0,0,0,0.6)';
             if (startX > 0) ctx.fillRect(0, 0, Math.min(width, startX), height);
             if (endX < width) ctx.fillRect(Math.max(0, endX), 0, width - Math.max(0, endX), height);
             
             const drawLine = (x, color, isHovered) => {
                 if (x < -5 || x > width + 5) return;
-                ctx.strokeStyle = color; 
-                ctx.lineWidth = isHovered ? 4 : 2;
-                ctx.beginPath(); 
-                ctx.moveTo(x, 0); 
-                ctx.lineTo(x, height); 
-                ctx.stroke();
-                ctx.fillStyle = color; 
-                ctx.beginPath(); 
-                ctx.arc(x, 10, isHovered ? 6 : 4, 0, Math.PI * 2); 
-                ctx.fill();
+                ctx.strokeStyle = color; ctx.lineWidth = isHovered ? 4 : 2;
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+                ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, 10, isHovered ? 6 : 4, 0, Math.PI * 2); ctx.fill();
             };
-            
             drawLine(startX, '#22c55e', draggingHandle === 'start' || hoverHandle === 'start');
             drawLine(endX, '#ef4444', draggingHandle === 'end' || hoverHandle === 'end');
 
-            // 4. Draw Playhead if previewing
+            if (seekPos !== null) {
+               const seekX = getScreenX(seekPos, width, totalSamples);
+               if (seekX >= 0 && seekX <= width) {
+                  ctx.strokeStyle = '#facc15'; ctx.lineWidth = 2;
+                  ctx.beginPath(); ctx.moveTo(seekX, 0); ctx.lineTo(seekX, height); ctx.stroke();
+               }
+            }
+
+            // Determine time to display: Playhead if playing, else SeekPos if set, else StartPos
+            let currentTimeDisplay = pad.settings.start * totalDuration;
+            
+            if (seekPos !== null && !isPreviewPlaying) {
+               currentTimeDisplay = seekPos * totalDuration;
+            }
+
             if (isPreviewPlaying && pad.buffer) {
                 const now = audioCtx.currentTime;
                 const duration = pad.buffer.duration;
                 const playStart = pad.settings.start * duration;
                 const playEnd = pad.settings.end * duration;
                 const playLength = playEnd - playStart;
-                
                 const elapsed = now - previewStartTimeRef.current;
                 let currentPosRatio = 0;
-
                 if (pad.settings.loop) {
                     const loopOffset = elapsed % playLength;
                     currentPosRatio = (playStart + loopOffset) / duration;
                 } else {
-                    currentPosRatio = (playStart + elapsed) / duration;
+                    currentPosRatio = (elapsed / duration); 
                 }
                 
-                // Ensure we don't draw past end if not looping
-                if (currentPosRatio <= pad.settings.end + 0.001) { // slight tolerance
+                // Update current time for display
+                currentTimeDisplay = currentPosRatio * duration;
+
+                if (currentPosRatio <= 1.0) {
                     const playheadX = getScreenX(currentPosRatio, width, totalSamples);
-                    
                     if (playheadX >= 0 && playheadX <= width) {
-                        ctx.strokeStyle = '#ffffff';
-                        ctx.lineWidth = 2;
-                        ctx.beginPath();
-                        ctx.moveTo(playheadX, 0);
-                        ctx.lineTo(playheadX, height);
-                        ctx.stroke();
+                        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2;
+                        ctx.beginPath(); ctx.moveTo(playheadX, 0); ctx.lineTo(playheadX, height); ctx.stroke();
                     }
                 }
-                
                 animationRef.current = requestAnimationFrame(render);
             }
-        };
 
-        render();
-        // Cleanup inside useEffect is tricky with RAF loop that depends on state.
-        // We rely on the dependencies change to re-trigger or stop.
-        // Ideally use a stable ref for the loop.
-        return () => {
-            if (animationRef.current) cancelAnimationFrame(animationRef.current);
+            // Update Text Ref
+            if (previewTimeRef.current) {
+               previewTimeRef.current.innerText = formatDuration(currentTimeDisplay);
+            }
         };
-      }, [pad, zoomX, zoomY, scrollPos, draggingHandle, hoverHandle, isPreviewPlaying, getScreenX, audioCtx]);
+        render();
+        return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current); };
+      }, [pad, zoomX, zoomY, scrollPos, draggingHandle, hoverHandle, isPreviewPlaying, getScreenX, audioCtx, seekPos]);
 
       return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
@@ -984,14 +1031,14 @@
             <div className="p-6 space-y-6 overflow-y-auto flex-1">
               
               {/* Preview Button Section */}
-              <div className="flex justify-center pb-2">
-                  <button 
-                     onClick={togglePreview}
-                     className={`flex items-center gap-2 px-6 py-3 rounded-full font-bold text-lg shadow-lg transition-all active:scale-95 touch-manipulation ${isPreviewPlaying ? 'bg-amber-500 text-white animate-pulse' : 'bg-green-600 text-white hover:bg-green-500'}`}
-                  >
+              <div className="flex justify-center pb-2 items-center gap-4">
+                  <button onClick={togglePreview} className={`flex items-center gap-2 px-6 py-3 rounded-full font-bold text-lg shadow-lg transition-all active:scale-95 touch-manipulation ${isPreviewPlaying ? 'bg-amber-500 text-white animate-pulse' : 'bg-green-600 text-white hover:bg-green-500'}`}>
                      {isPreviewPlaying ? <Square fill="currentColor" size={20}/> : <Play fill="currentColor" size={20}/>}
                      {isPreviewPlaying ? "停止" : "プレビュー再生"}
                   </button>
+                  <div className="bg-black/30 text-white font-mono text-xl px-4 py-2 rounded border border-white/10 shadow-inner w-32 text-center" ref={previewTimeRef}>
+                     0.00s
+                  </div>
               </div>
 
               <div className="space-y-2">
@@ -1001,17 +1048,7 @@
                   <button onClick={() => { setZoomX(1); setZoomY(1); setScrollPos(0); }} className="ml-auto text-xs flex items-center gap-1 px-3 py-1.5 bg-slate-600 hover:bg-slate-500 rounded text-white touch-manipulation"><Maximize size={12} /> 表示リセット</button>
                 </div>
                 <div className="relative h-48 w-full rounded-lg overflow-hidden ring-1 ring-slate-600 bg-slate-900 shadow-inner group">
-                  <canvas 
-                    ref={canvasRef} 
-                    width={800} 
-                    height={192} 
-                    style={{ touchAction: 'none' }} 
-                    className={`w-full h-full object-cover ${hoverHandle ? 'cursor-ew-resize' : 'cursor-default'}`} 
-                    onPointerDown={handlePointerDown} 
-                    onPointerMove={handlePointerMove} 
-                    onPointerUp={handlePointerUp} 
-                    onPointerLeave={handlePointerUp} 
-                  />
+                  <canvas ref={canvasRef} width={800} height={192} style={{ touchAction: 'none' }} className={`w-full h-full object-cover ${hoverHandle ? 'cursor-ew-resize' : 'cursor-default'}`} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp} />
                   {zoomX === 1 && !draggingHandle && !hoverHandle && (<div className="absolute bottom-2 right-2 text-[10px] text-slate-500 pointer-events-none opacity-50">緑(開始)・赤(終了)の線をドラッグして調整</div>)}
                 </div>
                 <div className={`transition-opacity duration-200 ${zoomX > 1 ? 'opacity-100' : 'opacity-30 pointer-events-none'}`}><input type="range" min="0" max="1" step="0.001" value={scrollPos} onChange={(e) => setScrollPos(parseFloat(e.target.value))} className="w-full accent-slate-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer touch-none p-2" /></div>
@@ -1019,94 +1056,85 @@
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-slate-700/50">
                 <div className="space-y-4 p-4 bg-slate-700/30 rounded-lg">
                   <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">範囲指定 (秒)</h3>
-                  <div className="space-y-1"><div className="flex justify-between text-xs"><span className="text-green-400 font-bold">開始位置</span><span>{(pad.settings.start * totalDuration).toFixed(3)}s</span></div><input type="range" min="0" max="1" step="0.001" value={pad.settings.start} onChange={(e) => { const val = parseFloat(e.target.value); if (val < pad.settings.end) onUpdate({ start: val }); }} className="w-full accent-green-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer touch-none p-2" /></div>
-                  <div className="space-y-1"><div className="flex justify-between text-xs"><span className="text-red-400 font-bold">終了位置</span><span>{(pad.settings.end * totalDuration).toFixed(3)}s</span></div><input type="range" min="0" max="1" step="0.001" value={pad.settings.end} onChange={(e) => { const val = parseFloat(e.target.value); if (val > pad.settings.start) onUpdate({ end: val }); }} className="w-full accent-red-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer touch-none p-2" /></div>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs items-center">
+                       <span className="text-green-400 font-bold">開始位置</span>
+                       <input type="number" step="0.001" className="bg-slate-800 border border-slate-600 rounded px-1 text-right text-xs w-20 text-white focus:outline-none focus:border-green-500" value={(pad.settings.start * totalDuration).toFixed(3)} onChange={(e) => handleTimeChange('start', e.target.value)} />
+                    </div>
+                    <input type="range" min="0" max="1" step="0.001" value={pad.settings.start} onChange={(e) => { const val = parseFloat(e.target.value); if (val < pad.settings.end) onUpdate({ start: val }); }} className="w-full accent-green-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer touch-none p-2" />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs items-center">
+                       <span className="text-red-400 font-bold">終了位置</span>
+                       <input type="number" step="0.001" className="bg-slate-800 border border-slate-600 rounded px-1 text-right text-xs w-20 text-white focus:outline-none focus:border-red-500" value={(pad.settings.end * totalDuration).toFixed(3)} onChange={(e) => handleTimeChange('end', e.target.value)} />
+                    </div>
+                    <input type="range" min="0" max="1" step="0.001" value={pad.settings.end} onChange={(e) => { const val = parseFloat(e.target.value); if (val > pad.settings.start) onUpdate({ end: val }); }} className="w-full accent-red-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer touch-none p-2" />
+                  </div>
                 </div>
                 <div className="space-y-4 p-4 bg-slate-700/30 rounded-lg">
                   <h3 className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">エフェクト</h3>
-                  
-                  {/* --- Loop Switch --- */}
                   <div className="flex items-center justify-between bg-slate-900/50 p-2 rounded mb-2">
                     <span className="text-xs font-bold text-slate-300 flex items-center gap-1"><Repeat size={14} /> リピート再生</span>
-                    <button 
-                      onClick={() => onUpdate({ loop: !pad.settings.loop })}
-                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors touch-manipulation ${pad.settings.loop ? 'bg-blue-600' : 'bg-slate-600'}`}
-                    >
+                    <button onClick={() => onUpdate({ loop: !pad.settings.loop })} className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors touch-manipulation ${pad.settings.loop ? 'bg-blue-600' : 'bg-slate-600'}`}>
                       <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${pad.settings.loop ? 'translate-x-5' : 'translate-x-1'}`} />
                     </button>
                   </div>
-
-                  {/* --- Timer Trigger --- */}
                   <div className="bg-slate-900/50 p-2 rounded mb-2 space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-slate-300 flex items-center gap-1"><Timer size={14} className="text-yellow-400" /> タイマー再生</span>
-                      <button 
-                        onClick={() => onUpdate({ enableTrigger: !pad.settings.enableTrigger })}
-                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors touch-manipulation ${pad.settings.enableTrigger ? 'bg-yellow-600' : 'bg-slate-600'}`}
-                      >
+                      <button onClick={() => onUpdate({ enableTrigger: !pad.settings.enableTrigger })} className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors touch-manipulation ${pad.settings.enableTrigger ? 'bg-yellow-600' : 'bg-slate-600'}`}>
                         <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${pad.settings.enableTrigger ? 'translate-x-5' : 'translate-x-1'}`} />
                       </button>
                     </div>
                     {pad.settings.enableTrigger && (
-                      <div className="flex items-center justify-between text-sm">
-                         <span className="text-slate-400 text-xs">開始時刻(JST/端末)</span>
-                         <input 
-                            type="time" 
-                            step="1"
-                            value={pad.settings.triggerTime || ''}
-                            onChange={(e) => onUpdate({ triggerTime: e.target.value })}
-                            className="bg-slate-800 text-white border border-slate-600 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
-                         />
-                      </div>
+                      <div className="flex items-center justify-between text-sm"><span className="text-slate-400 text-xs">開始時刻(JST/端末)</span><input type="time" step="1" value={pad.settings.triggerTime || ''} onChange={(e) => onUpdate({ triggerTime: e.target.value })} className="bg-slate-800 text-white border border-slate-600 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500" /></div>
                     )}
                   </div>
-
                   <div className="flex gap-4">
-                    <div className="flex-1 space-y-1"><div className="flex justify-between text-xs"><span>フェードイン</span><span>{pad.settings.fadeIn}s</span></div><input type="range" min="0" max="2" step="0.1" value={pad.settings.fadeIn} onChange={(e) => onUpdate({ fadeIn: parseFloat(e.target.value) })} className="w-full accent-blue-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer touch-none p-2" /></div>
-                    <div className="flex-1 space-y-1"><div className="flex justify-between text-xs"><span>フェードアウト</span><span>{pad.settings.fadeOut}s</span></div><input type="range" min="0" max="2" step="0.1" value={pad.settings.fadeOut} onChange={(e) => onUpdate({ fadeOut: parseFloat(e.target.value) })} className="w-full accent-blue-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer touch-none p-2" /></div>
+                    <div className="flex-1 space-y-1">
+                      <div className="flex justify-between text-xs items-center">
+                        <span>フェードイン</span>
+                        <input type="number" step="0.1" min="0" max="10" className="bg-slate-800 border border-slate-600 rounded px-1 text-right text-xs w-12 text-white focus:outline-none focus:border-blue-500" value={pad.settings.fadeIn} onChange={(e) => onUpdate({ fadeIn: Math.max(0, parseFloat(e.target.value) || 0) })} />
+                      </div>
+                      <input type="range" min="0" max="2" step="0.1" value={pad.settings.fadeIn} onChange={(e) => onUpdate({ fadeIn: parseFloat(e.target.value) })} className="w-full accent-blue-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer touch-none p-2" />
+                    </div>
+                    <div className="flex-1 space-y-1">
+                      <div className="flex justify-between text-xs items-center">
+                        <span>フェードアウト</span>
+                        <input type="number" step="0.1" min="0" max="10" className="bg-slate-800 border border-slate-600 rounded px-1 text-right text-xs w-12 text-white focus:outline-none focus:border-blue-500" value={pad.settings.fadeOut} onChange={(e) => onUpdate({ fadeOut: Math.max(0, parseFloat(e.target.value) || 0) })} />
+                      </div>
+                      <input type="range" min="0" max="2" step="0.1" value={pad.settings.fadeOut} onChange={(e) => onUpdate({ fadeOut: parseFloat(e.target.value) })} className="w-full accent-blue-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer touch-none p-2" />
+                    </div>
                   </div>
                   <div className="space-y-1 pt-2 border-t border-slate-600/50">
-                     <div className="flex justify-between text-xs items-center"><div className="flex items-center gap-2"><Volume2 size={14} /> 音量</div><span>{(pad.settings.volume * 100).toFixed(0)}%</span></div>
-                    <input type="range" min="0" max="3.0" step="0.1" value={pad.settings.volume} onChange={(e) => onUpdate({ volume: parseFloat(e.target.value) })} className="w-full accent-yellow-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer touch-none p-2" />
+                     <div className="flex justify-between text-xs items-center">
+                       <div className="flex items-center gap-2"><Volume2 size={14} /> 音量</div>
+                       <div className="flex items-center gap-1">
+                         <input type="number" step="0.1" min="-100" max="12" className="bg-slate-800 border border-slate-600 rounded px-1 text-right text-xs w-16 text-white focus:outline-none focus:border-yellow-500 font-mono" value={pad.settings.volume <= 0.0001 ? -100 : (20 * Math.log10(pad.settings.volume)).toFixed(1)} onChange={(e) => { let db = parseFloat(e.target.value); if (isNaN(db)) db = -100; if (db > 12) db = 12; onUpdate({ volume: db <= -100 ? 0 : Math.pow(10, db / 20) }); }} />
+                         <span className="text-xs text-slate-400">dB</span>
+                       </div>
+                     </div>
+                    <input type="range" min="0" max="4.0" step="0.1" value={pad.settings.volume} onChange={(e) => onUpdate({ volume: parseFloat(e.target.value) })} className="w-full accent-yellow-400 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer touch-none p-2" />
+                  </div>
+                  <div className="pt-4 border-t border-slate-600/50 text-right">
+                    <button onClick={() => { if(confirm("設定を初期状態に戻しますか？")) { onUpdate({ start: 0, end: 1, fadeIn: 0, fadeOut: 0, volume: 1, loop: false }); } }} className="text-xs text-slate-400 hover:text-white underline">設定を初期化</button>
                   </div>
                 </div>
               </div>
             </div>
             <div className="p-4 bg-slate-900/50 flex items-center justify-center gap-6 flex-shrink-0 relative">
-               <button 
-                  onClick={() => setShowResetConfirm(true)}
-                  className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-md font-medium text-sm transition-colors touch-manipulation"
-               >
-                  初期化
-               </button>
+               <button onClick={() => setShowResetConfirm(true)} className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-md font-medium text-sm transition-colors touch-manipulation">初期化</button>
               <button onClick={onClose} className="px-8 py-3 bg-blue-600 hover:bg-blue-500 rounded-full font-bold text-sm transition-colors shadow-lg touch-manipulation">完了</button>
             </div>
-
-            {/* Reset Confirmation Modal Overlay */}
             {showResetConfirm && (
               <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm rounded-2xl">
                 <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-2xl text-center max-w-xs m-4">
                    <div className="flex justify-center mb-4 text-amber-500"><AlertTriangle size={32} /></div>
                    <h3 className="text-lg font-bold text-white mb-2">設定の初期化</h3>
-                   <p className="text-slate-300 text-sm mb-6 leading-relaxed">
-                     開始・終了位置を含むすべての設定を初期状態に戻しますか？<br/>(音声ファイルは残ります)
-                   </p>
+                   <p className="text-slate-300 text-sm mb-6 leading-relaxed">開始・終了位置を含むすべての設定を初期状態に戻しますか？<br/>(音声ファイルは残ります)</p>
                    <div className="flex gap-3 justify-center">
-                     <button 
-                       onClick={() => setShowResetConfirm(false)}
-                       className="px-4 py-2 rounded bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium transition-colors"
-                     >
-                       キャンセル
-                     </button>
-                     <button 
-                       onClick={() => {
-                         onUpdate({ start: 0, end: 1, fadeIn: 0, fadeOut: 0, volume: 1, loop: false, enableTrigger: false, triggerTime: '' });
-                         setShowResetConfirm(false);
-                       }}
-                       className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 text-white text-sm font-bold shadow-lg transition-colors"
-                     >
-                       初期化する
-                     </button>
+                     <button onClick={() => setShowResetConfirm(false)} className="px-4 py-2 rounded bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium transition-colors">キャンセル</button>
+                     <button onClick={() => { onUpdate({ start: 0, end: 1, fadeIn: 0, fadeOut: 0, volume: 1, loop: false, enableTrigger: false, triggerTime: '' }); setShowResetConfirm(false); }} className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 text-white text-sm font-bold shadow-lg transition-colors">初期化する</button>
                    </div>
                 </div>
               </div>
