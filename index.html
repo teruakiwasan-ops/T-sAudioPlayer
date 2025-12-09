@@ -39,7 +39,7 @@
     
     /* Improved Slider for Touch */
     input[type=range] {
-      touch-action: none; /* Prevent scrolling while dragging slider */
+      touch-action: none;
     }
     input[type=range]::-webkit-slider-thumb {
       -webkit-appearance: none;
@@ -104,7 +104,8 @@
     const Square = (p) => <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></Icon>;
     const RefreshCw = (p) => <Icon {...p}><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></Icon>;
     const Timer = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></Icon>;
-
+    const PlayCircle = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></Icon>;
+    const StopCircle = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"></circle><rect x="9" y="9" width="6" height="6"></rect></Icon>;
 
     // --- Constants ---
     const KEY_MAP = [
@@ -145,8 +146,9 @@
       const [isReady, setIsReady] = useState(false);
       const [isLoadingData, setIsLoadingData] = useState(true);
       const [isProcessing, setIsProcessing] = useState(false);
-      const [transitionMode, setTransitionMode] = useState('CUT');
-      const [crossfadeDuration, setCrossfadeDuration] = useState(1.0);
+      const [startMode, setStartMode] = useState('CUT'); // New Start Mode
+      const [stopMode, setStopMode] = useState('CUT');   // New Stop Mode
+      const [globalFadeDuration, setGlobalFadeDuration] = useState(1.0); // Common Duration
       const [isEditMode, setIsEditMode] = useState(false);
       const [swapSourceId, setSwapSourceId] = useState(null);
       const [confirmDeleteId, setConfirmDeleteId] = useState(null); 
@@ -191,10 +193,14 @@
         const loadPads = async () => {
           try {
             let hasData = false;
-            const savedMode = await idbKeyval.get('transitionMode');
-            if (savedMode) setTransitionMode(savedMode);
-            const savedDur = await idbKeyval.get('crossfadeDuration');
-            if (savedDur) setCrossfadeDuration(savedDur);
+            // Load New Global Settings
+            const savedStartMode = await idbKeyval.get('startMode');
+            if (savedStartMode) setStartMode(savedStartMode);
+            const savedStopMode = await idbKeyval.get('stopMode');
+            if (savedStopMode) setStopMode(savedStopMode);
+            const savedDur = await idbKeyval.get('globalFadeDuration'); // Updated key
+            if (savedDur) setGlobalFadeDuration(savedDur);
+            
             const savedPadCount = await idbKeyval.get('padCount');
             const currentCount = savedPadCount || 10;
             setPadCount(currentCount);
@@ -259,21 +265,28 @@
          if (updated) setPads(newPads);
       };
 
-      const stopPad = useCallback((padId, mode = 'CUT', duration = 0) => {
+      // Updated stopPad with stopMode Logic
+      const stopPad = useCallback((padId) => {
         const nodes = activeAudioNodes.current[padId];
         if (!nodes || !audioCtx) return;
         try {
           const { source, gain } = nodes;
           if (nodes.isStopping) return;
           nodes.isStopping = true;
-          if (mode === 'FADE' && duration > 0) {
-            gain.gain.cancelScheduledValues(audioCtx.currentTime);
-            gain.gain.setValueAtTime(gain.gain.value, audioCtx.currentTime);
-            gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + duration);
-            source.stop(audioCtx.currentTime + duration);
-          } else { source.stop(); }
+          
+          // Determine fade out duration based on Stop Mode
+          let fadeTime = 0.02; // Default short fade to prevent click
+          if (stopMode === 'FADE') {
+            fadeTime = globalFadeDuration;
+          }
+
+          gain.gain.cancelScheduledValues(audioCtx.currentTime);
+          gain.gain.setValueAtTime(gain.gain.value, audioCtx.currentTime);
+          gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + fadeTime);
+          source.stop(audioCtx.currentTime + fadeTime);
+          
         } catch (e) { console.error(e); }
-      }, [audioCtx]);
+      }, [audioCtx, stopMode, globalFadeDuration]);
 
       const requestDelete = (padId) => { setConfirmDeleteId(padId); };
 
@@ -281,7 +294,13 @@
         const padId = confirmDeleteId;
         if (padId === null) return;
         setConfirmDeleteId(null); 
-        if (activeAudioNodes.current[padId]) stopPad(padId, 'CUT');
+        // Force stop
+        if (activeAudioNodes.current[padId]) {
+           const nodes = activeAudioNodes.current[padId];
+           try { nodes.source.stop(); } catch(e){}
+           delete activeAudioNodes.current[padId];
+           setPlayingPads(prev => { const n = { ...prev }; delete n[padId]; return n; });
+        }
         setPads(prev => {
           const newPads = [...prev];
           newPads[padId] = { id: padId, keyTrigger: KEY_MAP[padId], name: `Pad ${padId + 1}`, color: COLORS[padId], buffer: null, blob: null, url: null, settings: { start: 0, end: 1, fadeIn: 0, fadeOut: 0, volume: 1, loop: false, enableTrigger: false, triggerTime: '' } };
@@ -309,15 +328,19 @@
         }
       };
 
-      useEffect(() => { idbKeyval.set('transitionMode', transitionMode); }, [transitionMode]);
-      useEffect(() => { idbKeyval.set('crossfadeDuration', crossfadeDuration); }, [crossfadeDuration]);
+      useEffect(() => { idbKeyval.set('startMode', startMode); }, [startMode]);
+      useEffect(() => { idbKeyval.set('stopMode', stopMode); }, [stopMode]);
+      useEffect(() => { idbKeyval.set('globalFadeDuration', globalFadeDuration); }, [globalFadeDuration]);
 
       const handleExportProject = async () => {
         if (!isReady) return; 
         setIsProcessing(true);
         try {
           const zip = new JSZip();
-          const metadata = { transitionMode, crossfadeDuration, padCount, timestamp: new Date().toISOString(), pads: [] };
+          const metadata = { 
+            startMode, stopMode, globalFadeDuration, // Updated metadata
+            padCount, timestamp: new Date().toISOString(), pads: [] 
+          };
           pads.forEach((pad, idx) => {
             const padMeta = { id: idx, name: pad.name, keyTrigger: pad.keyTrigger, settings: pad.settings, hasAudio: false };
             if (pad.blob) {
@@ -351,8 +374,17 @@
           if (!zip.file("project.json")) throw new Error("Invalid project file");
           const metaStr = await zip.file("project.json").async("string");
           const metadata = JSON.parse(metaStr);
-          if (metadata.transitionMode) setTransitionMode(metadata.transitionMode);
-          if (metadata.crossfadeDuration) setCrossfadeDuration(metadata.crossfadeDuration);
+          
+          // Restore new settings if available, else map old
+          if (metadata.startMode) setStartMode(metadata.startMode);
+          else if (metadata.transitionMode) setStartMode(metadata.transitionMode); // fallback
+
+          if (metadata.stopMode) setStopMode(metadata.stopMode);
+          else if (metadata.transitionMode) setStopMode(metadata.transitionMode); // fallback
+
+          if (metadata.globalFadeDuration) setGlobalFadeDuration(metadata.globalFadeDuration);
+          else if (metadata.crossfadeDuration) setGlobalFadeDuration(metadata.crossfadeDuration);
+
           const count = metadata.padCount || 10;
           setPadCount(count);
           await idbKeyval.set('padCount', count);
@@ -405,40 +437,79 @@
         }
       };
 
+      // Updated Trigger Logic with Start Mode
       const triggerPad = useCallback((padId) => {
+        if (isEditMode) return;
         const pad = padsRef.current[padId]; 
         if (!pad || !pad.buffer || !audioCtx) return;
         
         const now = audioCtx.currentTime;
         
+        // If already playing, stop using Stop Mode
         if (activeAudioNodes.current[padId]) { 
-           stopPad(padId, transitionMode, crossfadeDuration); 
+           stopPad(padId); 
            return; 
         }
         
+        // Exclusive Playback: Stop others using Stop Mode
         Object.keys(activeAudioNodes.current).forEach((activeId) => {
-          if (parseInt(activeId) !== padId) stopPad(parseInt(activeId), transitionMode, crossfadeDuration);
+          if (parseInt(activeId) !== padId) stopPad(parseInt(activeId));
         });
+
         const source = audioCtx.createBufferSource();
         source.buffer = pad.buffer;
         source.loop = pad.settings.loop;
         const gainNode = audioCtx.createGain();
         source.connect(gainNode);
         gainNode.connect(audioCtx.destination);
-        const duration = pad.buffer.duration;
-        const startTime = pad.settings.start * duration;
-        const endTime = pad.settings.end * duration;
+        
+        const totalDuration = pad.buffer.duration;
+        const startTime = pad.settings.start * totalDuration;
+        const endTime = pad.settings.end * totalDuration;
         const playDuration = Math.max(0, endTime - startTime);
-        gainNode.gain.value = pad.settings.volume;
-        if (pad.settings.fadeIn > 0) {
-          gainNode.gain.setValueAtTime(0, now);
-          gainNode.gain.linearRampToValueAtTime(pad.settings.volume, now + Math.min(pad.settings.fadeIn, playDuration));
+        
+        // Initial Volume
+        const targetVolume = pad.settings.volume;
+        
+        // Apply Start Mode Global Fade if ON
+        if (startMode === 'FADE') {
+           gainNode.gain.setValueAtTime(0, now);
+           // If pad has its own fadeIn, we ignore it or add? 
+           // Decision: Global mode OVERRIDES pad fade for "Attack".
+           // But if user set pad fade, maybe they want that?
+           // Simple approach: Use Global Fade Duration for the attack.
+           gainNode.gain.linearRampToValueAtTime(targetVolume, now + Math.min(globalFadeDuration, playDuration));
+        } else {
+           // CUT Mode: Instant (with micro fade to avoid click)
+           gainNode.gain.setValueAtTime(0, now);
+           gainNode.gain.linearRampToValueAtTime(targetVolume, now + 0.02);
+           
+           // If StartMode is CUT, but pad has specific FadeIn setting, should we respect it?
+           // The prompt implies global "Start Mode". 
+           // If StartMode=CUT, we ignore global fade. But pad.settings.fadeIn?
+           // Let's assume StartMode=CUT means "Instant Start".
+           // If user wants pad specific fade, they might need to use FADE mode?
+           // Let's respect Pad setting if it's longer than 0.02? 
+           // Actually, let's keep it simple: StartMode CUT = Instant (ignoring pad fadeIn).
+           // If you want pad fadeIn, use StartMode FADE (or maybe we just apply pad fade if StartMode=CUT?)
+           // For consistent "Pon-Dashi", CUT usually means immediate max volume.
+           // However, let's stick to:
+           // If Start=FADE -> Global Fade Time.
+           // If Start=CUT -> Instant (Pad's fadeIn ignored or maybe just kept if exist? Let's ignore for "CUT" feel).
+           // Actually, Pad Settings are "Edit". Global is "Mode".
+           // Let's prioritize Global Mode behavior.
         }
+        
+        // Handle Fade Out at end (Pad specific setting) if not looping
         if (!pad.settings.loop && pad.settings.fadeOut > 0) {
           const fadeOutStart = now + playDuration - pad.settings.fadeOut;
-          gainNode.gain.setValueAtTime(pad.settings.volume, Math.max(now, fadeOutStart));
-          gainNode.gain.linearRampToValueAtTime(0, now + playDuration);
+          // Only schedule if it's in the future
+          if (fadeOutStart > now) {
+             gainNode.gain.setValueAtTime(targetVolume, fadeOutStart);
+             gainNode.gain.linearRampToValueAtTime(0, now + playDuration);
+          }
         }
+
         if (pad.settings.loop) {
           source.loopStart = startTime;
           source.loopEnd = endTime;
@@ -446,15 +517,17 @@
         } else {
           source.start(now, startTime, playDuration);
         }
+        
         activeAudioNodes.current[padId] = { source, gain: gainNode, isStopping: false };
         setPlayingPads(prev => ({ ...prev, [padId]: { startTime: now, duration: playDuration, loop: pad.settings.loop } }));
+        
         source.onended = () => {
           if (activeAudioNodes.current[padId]?.source === source) {
             delete activeAudioNodes.current[padId];
             setPlayingPads(prev => { const n = { ...prev }; delete n[padId]; return n; });
           }
         };
-      }, [audioCtx, transitionMode, crossfadeDuration, stopPad]); 
+      }, [audioCtx, startMode, globalFadeDuration, stopPad]); // Dependencies updated
 
       const triggerPadFromTimer = (padId) => {
          if (activeAudioNodes.current[padId]) {
@@ -536,12 +609,34 @@
               </div>
             </div>
             {!isEditMode && (
-              <div className="flex flex-wrap items-center justify-center gap-2 bg-slate-900/50 p-1.5 rounded-lg border border-slate-700/50">
-                 <div className="flex bg-slate-800 rounded-md p-0.5 border border-slate-700 scale-90 origin-left">
-                   <button onClick={() => setTransitionMode('CUT')} className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-bold transition-all ${transitionMode === 'CUT' ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-white'}`}><Zap size={12} /> CUT</button>
-                   <button onClick={() => setTransitionMode('FADE')} className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-bold transition-all ${transitionMode === 'FADE' ? 'bg-blue-500 text-white' : 'text-slate-400 hover:text-white'}`}><Layers size={12} /> FADE</button>
+              <div className="flex flex-wrap items-center justify-center gap-3 bg-slate-900/50 p-1.5 rounded-lg border border-slate-700/50">
+                 {/* Start Mode */}
+                 <div className="flex flex-col items-center">
+                    <span className="text-[10px] text-slate-400 mb-0.5">Start</span>
+                    <div className="flex bg-slate-800 rounded-md p-0.5 border border-slate-700">
+                      <button onClick={() => setStartMode('CUT')} className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${startMode === 'CUT' ? 'bg-green-600 text-white' : 'text-slate-400 hover:text-white'}`}>CUT</button>
+                      <button onClick={() => setStartMode('FADE')} className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${startMode === 'FADE' ? 'bg-blue-500 text-white' : 'text-slate-400 hover:text-white'}`}>FADE</button>
+                    </div>
                  </div>
-                 {transitionMode === 'FADE' && (<div className="flex items-center gap-1 ml-1"><div className="flex bg-slate-800 rounded-md border border-slate-700 overflow-hidden scale-90 origin-left">{FADE_DURATIONS.map(dur => (<button key={dur} onClick={() => setCrossfadeDuration(dur)} className={`px-2 py-1 text-[10px] font-bold border-r border-slate-700 last:border-0 transition-colors ${crossfadeDuration === dur ? 'bg-blue-500/20 text-blue-300' : 'text-slate-500 hover:bg-slate-700 hover:text-slate-300'}`}>{dur}s</button>))}</div></div>)}
+
+                 {/* Stop Mode */}
+                 <div className="flex flex-col items-center">
+                    <span className="text-[10px] text-slate-400 mb-0.5">Stop</span>
+                    <div className="flex bg-slate-800 rounded-md p-0.5 border border-slate-700">
+                      <button onClick={() => setStopMode('CUT')} className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${stopMode === 'CUT' ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-white'}`}>CUT</button>
+                      <button onClick={() => setStopMode('FADE')} className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${stopMode === 'FADE' ? 'bg-blue-500 text-white' : 'text-slate-400 hover:text-white'}`}>FADE</button>
+                    </div>
+                 </div>
+
+                 {/* Common Fade Duration (Visible if any FADE is active) */}
+                 {(startMode === 'FADE' || stopMode === 'FADE') && (
+                   <div className="flex flex-col items-center animate-in fade-in zoom-in duration-200">
+                      <span className="text-[10px] text-slate-400 mb-0.5">Fade Time</span>
+                      <div className="flex bg-slate-800 rounded-md border border-slate-700 overflow-hidden">
+                        {FADE_DURATIONS.map(dur => (<button key={dur} onClick={() => setGlobalFadeDuration(dur)} className={`px-2 py-1 text-[10px] font-bold border-r border-slate-700 last:border-0 transition-colors ${globalFadeDuration === dur ? 'bg-blue-500/20 text-blue-300' : 'text-slate-500 hover:bg-slate-700 hover:text-slate-300'}`}>{dur}s</button>))}
+                      </div>
+                   </div>
+                 )}
               </div>
             )}
             {isEditMode && (
