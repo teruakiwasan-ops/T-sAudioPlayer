@@ -39,7 +39,7 @@
     
     /* Improved Slider for Touch */
     input[type=range] {
-      touch-action: none;
+      touch-action: none; /* Prevent scrolling while dragging slider */
     }
     input[type=range]::-webkit-slider-thumb {
       -webkit-appearance: none;
@@ -106,6 +106,10 @@
     const Timer = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></Icon>;
     const PlayCircle = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></Icon>;
     const StopCircle = (p) => <Icon {...p}><circle cx="12" cy="12" r="10"></circle><rect x="9" y="9" width="6" height="6"></rect></Icon>;
+    const Repeat1 = (p) => <Icon {...p}><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></Icon>;
+    const Sliders = (p) => <Icon {...p}><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></Icon>;
+    const ArrowDown = (p) => <Icon {...p}><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></Icon>;
+
 
     // --- Constants ---
     const KEY_MAP = [
@@ -146,13 +150,16 @@
       const [isReady, setIsReady] = useState(false);
       const [isLoadingData, setIsLoadingData] = useState(true);
       const [isProcessing, setIsProcessing] = useState(false);
-      const [startMode, setStartMode] = useState('CUT'); // New Start Mode
-      const [stopMode, setStopMode] = useState('CUT');   // New Stop Mode
-      const [globalFadeDuration, setGlobalFadeDuration] = useState(1.0); // Common Duration
+      const [transitionMode, setTransitionMode] = useState('CUT');
+      const [crossfadeDuration, setCrossfadeDuration] = useState(1.0);
+      const [playbackMode, setPlaybackMode] = useState('SWITCH'); // New State: SWITCH or MIX
       const [isEditMode, setIsEditMode] = useState(false);
       const [swapSourceId, setSwapSourceId] = useState(null);
       const [confirmDeleteId, setConfirmDeleteId] = useState(null); 
       const [currentTimeStr, setCurrentTimeStr] = useState('');
+      const [startMode, setStartMode] = useState('CUT'); 
+      const [stopMode, setStopMode] = useState('CUT');   
+      const [globalFadeDuration, setGlobalFadeDuration] = useState(1.0); 
 
       const activeAudioNodes = useRef({});
       const fileInputRefs = useRef([]);
@@ -193,13 +200,15 @@
         const loadPads = async () => {
           try {
             let hasData = false;
-            // Load New Global Settings
+            // Load Settings
             const savedStartMode = await idbKeyval.get('startMode');
             if (savedStartMode) setStartMode(savedStartMode);
             const savedStopMode = await idbKeyval.get('stopMode');
             if (savedStopMode) setStopMode(savedStopMode);
-            const savedDur = await idbKeyval.get('globalFadeDuration'); // Updated key
+            const savedDur = await idbKeyval.get('globalFadeDuration'); 
             if (savedDur) setGlobalFadeDuration(savedDur);
+            const savedPlaybackMode = await idbKeyval.get('playbackMode');
+            if (savedPlaybackMode) setPlaybackMode(savedPlaybackMode);
             
             const savedPadCount = await idbKeyval.get('padCount');
             const currentCount = savedPadCount || 10;
@@ -211,7 +220,13 @@
                 const settings = { 
                   loop: false, enableTrigger: false, triggerTime: '', ...data.settings 
                 };
-                loadedPads[i] = { ...loadedPads[i], ...data, settings, buffer: null, url: data.blob ? URL.createObjectURL(data.blob) : null };
+                loadedPads[i] = { 
+                  ...loadedPads[i], 
+                  ...data, 
+                  settings, 
+                  buffer: null, 
+                  url: data.blob ? URL.createObjectURL(data.blob) : null 
+                };
                 hasData = true;
               }
             }
@@ -274,8 +289,7 @@
           if (nodes.isStopping) return;
           nodes.isStopping = true;
           
-          // Determine fade out duration based on Stop Mode
-          let fadeTime = 0.02; // Default short fade to prevent click
+          let fadeTime = 0.02; 
           if (stopMode === 'FADE') {
             fadeTime = globalFadeDuration;
           }
@@ -331,6 +345,7 @@
       useEffect(() => { idbKeyval.set('startMode', startMode); }, [startMode]);
       useEffect(() => { idbKeyval.set('stopMode', stopMode); }, [stopMode]);
       useEffect(() => { idbKeyval.set('globalFadeDuration', globalFadeDuration); }, [globalFadeDuration]);
+      useEffect(() => { idbKeyval.set('playbackMode', playbackMode); }, [playbackMode]);
 
       const handleExportProject = async () => {
         if (!isReady) return; 
@@ -338,7 +353,7 @@
         try {
           const zip = new JSZip();
           const metadata = { 
-            startMode, stopMode, globalFadeDuration, // Updated metadata
+            startMode, stopMode, globalFadeDuration, playbackMode, 
             padCount, timestamp: new Date().toISOString(), pads: [] 
           };
           pads.forEach((pad, idx) => {
@@ -375,15 +390,16 @@
           const metaStr = await zip.file("project.json").async("string");
           const metadata = JSON.parse(metaStr);
           
-          // Restore new settings if available, else map old
           if (metadata.startMode) setStartMode(metadata.startMode);
-          else if (metadata.transitionMode) setStartMode(metadata.transitionMode); // fallback
+          else if (metadata.transitionMode) setStartMode(metadata.transitionMode); 
 
           if (metadata.stopMode) setStopMode(metadata.stopMode);
-          else if (metadata.transitionMode) setStopMode(metadata.transitionMode); // fallback
+          else if (metadata.transitionMode) setStopMode(metadata.transitionMode); 
 
           if (metadata.globalFadeDuration) setGlobalFadeDuration(metadata.globalFadeDuration);
           else if (metadata.crossfadeDuration) setGlobalFadeDuration(metadata.crossfadeDuration);
+
+          if (metadata.playbackMode) setPlaybackMode(metadata.playbackMode);
 
           const count = metadata.padCount || 10;
           setPadCount(count);
@@ -445,17 +461,19 @@
         
         const now = audioCtx.currentTime;
         
-        // If already playing, stop using Stop Mode
+        // If already playing, stop using Stop Mode (Toggle)
         if (activeAudioNodes.current[padId]) { 
            stopPad(padId); 
            return; 
         }
         
-        // Exclusive Playback: Stop others using Stop Mode
-        Object.keys(activeAudioNodes.current).forEach((activeId) => {
-          if (parseInt(activeId) !== padId) stopPad(parseInt(activeId));
-        });
-
+        // Exclusive Playback logic based on Playback Mode
+        if (playbackMode === 'SWITCH') {
+            Object.keys(activeAudioNodes.current).forEach((activeId) => {
+              if (parseInt(activeId) !== padId) stopPad(parseInt(activeId));
+            });
+        }
+        
         const source = audioCtx.createBufferSource();
         source.buffer = pad.buffer;
         source.loop = pad.settings.loop;
@@ -468,42 +486,18 @@
         const endTime = pad.settings.end * totalDuration;
         const playDuration = Math.max(0, endTime - startTime);
         
-        // Initial Volume
         const targetVolume = pad.settings.volume;
         
-        // Apply Start Mode Global Fade if ON
         if (startMode === 'FADE') {
            gainNode.gain.setValueAtTime(0, now);
-           // If pad has its own fadeIn, we ignore it or add? 
-           // Decision: Global mode OVERRIDES pad fade for "Attack".
-           // But if user set pad fade, maybe they want that?
-           // Simple approach: Use Global Fade Duration for the attack.
            gainNode.gain.linearRampToValueAtTime(targetVolume, now + Math.min(globalFadeDuration, playDuration));
         } else {
-           // CUT Mode: Instant (with micro fade to avoid click)
            gainNode.gain.setValueAtTime(0, now);
            gainNode.gain.linearRampToValueAtTime(targetVolume, now + 0.02);
-           
-           // If StartMode is CUT, but pad has specific FadeIn setting, should we respect it?
-           // The prompt implies global "Start Mode". 
-           // If StartMode=CUT, we ignore global fade. But pad.settings.fadeIn?
-           // Let's assume StartMode=CUT means "Instant Start".
-           // If user wants pad specific fade, they might need to use FADE mode?
-           // Let's respect Pad setting if it's longer than 0.02? 
-           // Actually, let's keep it simple: StartMode CUT = Instant (ignoring pad fadeIn).
-           // If you want pad fadeIn, use StartMode FADE (or maybe we just apply pad fade if StartMode=CUT?)
-           // For consistent "Pon-Dashi", CUT usually means immediate max volume.
-           // However, let's stick to:
-           // If Start=FADE -> Global Fade Time.
-           // If Start=CUT -> Instant (Pad's fadeIn ignored or maybe just kept if exist? Let's ignore for "CUT" feel).
-           // Actually, Pad Settings are "Edit". Global is "Mode".
-           // Let's prioritize Global Mode behavior.
         }
         
-        // Handle Fade Out at end (Pad specific setting) if not looping
         if (!pad.settings.loop && pad.settings.fadeOut > 0) {
           const fadeOutStart = now + playDuration - pad.settings.fadeOut;
-          // Only schedule if it's in the future
           if (fadeOutStart > now) {
              gainNode.gain.setValueAtTime(targetVolume, fadeOutStart);
              gainNode.gain.linearRampToValueAtTime(0, now + playDuration);
@@ -527,7 +521,7 @@
             setPlayingPads(prev => { const n = { ...prev }; delete n[padId]; return n; });
           }
         };
-      }, [audioCtx, startMode, globalFadeDuration, stopPad]); // Dependencies updated
+      }, [audioCtx, startMode, playbackMode, globalFadeDuration, stopPad]); 
 
       const triggerPadFromTimer = (padId) => {
          if (activeAudioNodes.current[padId]) {
@@ -609,31 +603,50 @@
               </div>
             </div>
             {!isEditMode && (
-              <div className="flex flex-wrap items-center justify-center gap-3 bg-slate-900/50 p-1.5 rounded-lg border border-slate-700/50">
+              <div className="flex flex-wrap items-center justify-center gap-6 bg-slate-900/50 p-3 rounded-lg border border-slate-700/50">
+                 {/* Playback Mode */}
+                 <div className="flex flex-col items-center">
+                    <span className="text-xs font-bold uppercase text-slate-400 mb-1">Mode</span>
+                    <div className="flex bg-slate-800 rounded-md p-0.5 border border-slate-700">
+                      <button onClick={() => setPlaybackMode('SWITCH')} className={`px-4 py-2 rounded text-sm font-bold transition-all ${playbackMode === 'SWITCH' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}>SWITCH</button>
+                      <button onClick={() => setPlaybackMode('MIX')} className={`px-4 py-2 rounded text-sm font-bold transition-all ${playbackMode === 'MIX' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'}`}>MIX</button>
+                    </div>
+                 </div>
+
                  {/* Start Mode */}
                  <div className="flex flex-col items-center">
-                    <span className="text-[10px] text-slate-400 mb-0.5">Start</span>
+                    <span className="text-xs font-bold uppercase text-slate-400 mb-1">Start</span>
                     <div className="flex bg-slate-800 rounded-md p-0.5 border border-slate-700">
-                      <button onClick={() => setStartMode('CUT')} className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${startMode === 'CUT' ? 'bg-green-600 text-white' : 'text-slate-400 hover:text-white'}`}>CUT</button>
-                      <button onClick={() => setStartMode('FADE')} className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${startMode === 'FADE' ? 'bg-blue-500 text-white' : 'text-slate-400 hover:text-white'}`}>FADE</button>
+                      <button onClick={() => setStartMode('CUT')} className={`px-4 py-2 rounded text-sm font-bold transition-all ${startMode === 'CUT' ? 'bg-green-600 text-white' : 'text-slate-400 hover:text-white'}`}>CUT</button>
+                      <button onClick={() => setStartMode('FADE')} className={`px-4 py-2 rounded text-sm font-bold transition-all ${startMode === 'FADE' ? 'bg-blue-500 text-white' : 'text-slate-400 hover:text-white'}`}>FADE</button>
                     </div>
                  </div>
 
                  {/* Stop Mode */}
                  <div className="flex flex-col items-center">
-                    <span className="text-[10px] text-slate-400 mb-0.5">Stop</span>
+                    <span className="text-xs font-bold uppercase text-slate-400 mb-1">Stop</span>
                     <div className="flex bg-slate-800 rounded-md p-0.5 border border-slate-700">
-                      <button onClick={() => setStopMode('CUT')} className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${stopMode === 'CUT' ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-white'}`}>CUT</button>
-                      <button onClick={() => setStopMode('FADE')} className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${stopMode === 'FADE' ? 'bg-blue-500 text-white' : 'text-slate-400 hover:text-white'}`}>FADE</button>
+                      <button onClick={() => setStopMode('CUT')} className={`px-4 py-2 rounded text-sm font-bold transition-all ${stopMode === 'CUT' ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-white'}`}>CUT</button>
+                      <button onClick={() => setStopMode('FADE')} className={`px-4 py-2 rounded text-sm font-bold transition-all ${stopMode === 'FADE' ? 'bg-blue-500 text-white' : 'text-slate-400 hover:text-white'}`}>FADE</button>
                     </div>
                  </div>
 
                  {/* Common Fade Duration (Visible if any FADE is active) */}
                  {(startMode === 'FADE' || stopMode === 'FADE') && (
                    <div className="flex flex-col items-center animate-in fade-in zoom-in duration-200">
-                      <span className="text-[10px] text-slate-400 mb-0.5">Fade Time</span>
-                      <div className="flex bg-slate-800 rounded-md border border-slate-700 overflow-hidden">
-                        {FADE_DURATIONS.map(dur => (<button key={dur} onClick={() => setGlobalFadeDuration(dur)} className={`px-2 py-1 text-[10px] font-bold border-r border-slate-700 last:border-0 transition-colors ${globalFadeDuration === dur ? 'bg-blue-500/20 text-blue-300' : 'text-slate-500 hover:bg-slate-700 hover:text-slate-300'}`}>{dur}s</button>))}
+                      <span className="text-xs font-bold uppercase text-slate-400 mb-1">Fade Time</span>
+                      <div className="flex items-center gap-2">
+                        <div className="flex bg-slate-800 rounded-md border border-slate-700 overflow-hidden">
+                          {FADE_DURATIONS.map(dur => (<button key={dur} onClick={() => setGlobalFadeDuration(dur)} className={`px-3 py-2 text-sm font-bold border-r border-slate-700 last:border-0 transition-colors ${globalFadeDuration === dur ? 'bg-blue-500/20 text-blue-300' : 'text-slate-500 hover:bg-slate-700 hover:text-slate-300'}`}>{dur}s</button>))}
+                        </div>
+                        <input 
+                           type="number" 
+                           step="0.1" 
+                           min="0"
+                           className="w-16 bg-slate-800 border border-slate-700 rounded-md px-2 py-2 text-sm font-bold text-center text-white focus:outline-none focus:border-blue-500" 
+                           value={globalFadeDuration}
+                           onChange={(e) => setGlobalFadeDuration(Math.max(0, parseFloat(e.target.value) || 0))}
+                        />
                       </div>
                    </div>
                  )}
@@ -852,6 +865,32 @@
             if (ratio < pad.settings.end) onUpdate({ start: ratio });
          } else {
             if (ratio > pad.settings.start) onUpdate({ end: ratio });
+         }
+      };
+
+      // Helper to calculate current preview position
+      const getCurrentRatio = () => {
+         if (isPreviewPlaying && pad.buffer && audioCtx) {
+             const now = audioCtx.currentTime;
+             const duration = pad.buffer.duration;
+             const playStart = pad.settings.start * duration;
+             const playEnd = pad.settings.end * duration;
+             const playLength = playEnd - playStart;
+             const elapsed = now - previewStartTimeRef.current;
+             
+             if (pad.settings.loop) {
+                 const loopOffset = elapsed % playLength;
+                 return (playStart + loopOffset) / duration;
+             } else {
+                 return (elapsed / duration); // Simple ratio from buffer start (since offset included in previewStartTimeRef logic)
+                 // Note: In startPreview, previewStartTimeRef = now - startTimeOffset.
+                 // So elapsed = (now) - (now - startTimeOffset) = startTimeOffset + actual_elapsed.
+                 // So elapsed / duration is correct absolute ratio.
+             }
+         } else if (seekPos !== null) {
+             return seekPos;
+         } else {
+             return pad.settings.start;
          }
       };
 
@@ -1154,14 +1193,38 @@
                   <div className="space-y-1">
                     <div className="flex justify-between text-xs items-center">
                        <span className="text-green-400 font-bold">開始位置</span>
-                       <input type="number" step="0.001" className="bg-slate-800 border border-slate-600 rounded px-1 text-right text-xs w-20 text-white focus:outline-none focus:border-green-500" value={(pad.settings.start * totalDuration).toFixed(3)} onChange={(e) => handleTimeChange('start', e.target.value)} />
+                       <div className="flex gap-2 items-center">
+                          <button 
+                            onClick={() => {
+                               const currentRatio = getCurrentRatio();
+                               if (currentRatio < pad.settings.end) onUpdate({ start: currentRatio });
+                            }}
+                            className="text-[10px] bg-slate-700 hover:bg-slate-600 px-2 py-0.5 rounded text-slate-200 border border-slate-500 flex items-center gap-1"
+                            title="現在位置を設定"
+                          >
+                            <ArrowDown size={10} /> 現在位置
+                          </button>
+                          <input type="number" step="0.001" className="bg-slate-800 border border-slate-600 rounded px-1 text-right text-xs w-20 text-white focus:outline-none focus:border-green-500" value={(pad.settings.start * totalDuration).toFixed(3)} onChange={(e) => handleTimeChange('start', e.target.value)} />
+                       </div>
                     </div>
                     <input type="range" min="0" max="1" step="0.001" value={pad.settings.start} onChange={(e) => { const val = parseFloat(e.target.value); if (val < pad.settings.end) onUpdate({ start: val }); }} className="w-full accent-green-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer touch-none p-2" />
                   </div>
                   <div className="space-y-1">
                     <div className="flex justify-between text-xs items-center">
                        <span className="text-red-400 font-bold">終了位置</span>
-                       <input type="number" step="0.001" className="bg-slate-800 border border-slate-600 rounded px-1 text-right text-xs w-20 text-white focus:outline-none focus:border-red-500" value={(pad.settings.end * totalDuration).toFixed(3)} onChange={(e) => handleTimeChange('end', e.target.value)} />
+                       <div className="flex gap-2 items-center">
+                          <button 
+                            onClick={() => {
+                               const currentRatio = getCurrentRatio();
+                               if (currentRatio > pad.settings.start) onUpdate({ end: currentRatio });
+                            }}
+                            className="text-[10px] bg-slate-700 hover:bg-slate-600 px-2 py-0.5 rounded text-slate-200 border border-slate-500 flex items-center gap-1"
+                            title="現在位置を設定"
+                          >
+                            <ArrowDown size={10} /> 現在位置
+                          </button>
+                          <input type="number" step="0.001" className="bg-slate-800 border border-slate-600 rounded px-1 text-right text-xs w-20 text-white focus:outline-none focus:border-red-500" value={(pad.settings.end * totalDuration).toFixed(3)} onChange={(e) => handleTimeChange('end', e.target.value)} />
+                       </div>
                     </div>
                     <input type="range" min="0" max="1" step="0.001" value={pad.settings.end} onChange={(e) => { const val = parseFloat(e.target.value); if (val > pad.settings.start) onUpdate({ end: val }); }} className="w-full accent-red-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer touch-none p-2" />
                   </div>
