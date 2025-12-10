@@ -109,7 +109,7 @@
     const Repeat1 = (p) => <Icon {...p}><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></Icon>;
     const Sliders = (p) => <Icon {...p}><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></Icon>;
     const ArrowDown = (p) => <Icon {...p}><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></Icon>;
-
+    const BookOpen = (p) => <Icon {...p}><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></Icon>;
 
     // --- Constants ---
     const KEY_MAP = [
@@ -152,7 +152,7 @@
       const [isProcessing, setIsProcessing] = useState(false);
       const [transitionMode, setTransitionMode] = useState('CUT');
       const [crossfadeDuration, setCrossfadeDuration] = useState(1.0);
-      const [playbackMode, setPlaybackMode] = useState('SWITCH'); // New State: SWITCH or MIX
+      const [playbackMode, setPlaybackMode] = useState('SWITCH');
       const [isEditMode, setIsEditMode] = useState(false);
       const [swapSourceId, setSwapSourceId] = useState(null);
       const [confirmDeleteId, setConfirmDeleteId] = useState(null); 
@@ -160,6 +160,7 @@
       const [startMode, setStartMode] = useState('CUT'); 
       const [stopMode, setStopMode] = useState('CUT');   
       const [globalFadeDuration, setGlobalFadeDuration] = useState(1.0); 
+      const [showManual, setShowManual] = useState(false);
 
       const activeAudioNodes = useRef({});
       const fileInputRefs = useRef([]);
@@ -280,8 +281,7 @@
          if (updated) setPads(newPads);
       };
 
-      // Updated stopPad with stopMode Logic
-      const stopPad = useCallback((padId) => {
+      const stopPad = useCallback((padId, mode = 'CUT', duration = 0) => {
         const nodes = activeAudioNodes.current[padId];
         if (!nodes || !audioCtx) return;
         try {
@@ -308,7 +308,6 @@
         const padId = confirmDeleteId;
         if (padId === null) return;
         setConfirmDeleteId(null); 
-        // Force stop
         if (activeAudioNodes.current[padId]) {
            const nodes = activeAudioNodes.current[padId];
            try { nodes.source.stop(); } catch(e){}
@@ -453,7 +452,6 @@
         }
       };
 
-      // Updated Trigger Logic with Start Mode
       const triggerPad = useCallback((padId) => {
         if (isEditMode) return;
         const pad = padsRef.current[padId]; 
@@ -461,13 +459,11 @@
         
         const now = audioCtx.currentTime;
         
-        // If already playing, stop using Stop Mode (Toggle)
         if (activeAudioNodes.current[padId]) { 
            stopPad(padId); 
            return; 
         }
         
-        // Exclusive Playback logic based on Playback Mode
         if (playbackMode === 'SWITCH') {
             Object.keys(activeAudioNodes.current).forEach((activeId) => {
               if (parseInt(activeId) !== padId) stopPad(parseInt(activeId));
@@ -595,6 +591,7 @@
               <div className="flex items-center gap-2">
                  <button onClick={togglePadCount} disabled={isProcessing} className="flex items-center gap-1 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-bold text-slate-300 disabled:opacity-30 mr-2" title="パッド数を切替"><Grid size={14} /> {padCount}</button>
                  <button onClick={() => { setIsEditMode(!isEditMode); setSwapSourceId(null); }} className={`flex items-center gap-1 px-3 py-1.5 rounded text-xs font-bold transition-colors ${isEditMode ? 'bg-amber-600 text-white animate-pulse' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}><Edit3 size={14} /> {isEditMode ? 'EDIT中' : 'EDIT'}</button>
+                 <button onClick={() => setShowManual(true)} className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-bold bg-slate-700 hover:bg-slate-600 text-slate-300" title="マニュアル"><BookOpen size={16} /></button>
                  <div className="flex items-center gap-1 bg-slate-700/50 rounded p-0.5">
                    <button onClick={handleExportProject} disabled={isProcessing || isEditMode} className="p-1.5 hover:bg-slate-600 rounded text-slate-300 disabled:opacity-30"><Download size={16} /></button>
                    <button onClick={() => projectInputRef.current.click()} disabled={isProcessing || isEditMode} className="p-1.5 hover:bg-slate-600 rounded text-slate-300 disabled:opacity-30"><FolderOpen size={16} /></button>
@@ -603,10 +600,10 @@
               </div>
             </div>
             {!isEditMode && (
-              <div className="flex flex-wrap items-center justify-center gap-6 bg-slate-900/50 p-3 rounded-lg border border-slate-700/50">
+              <div className="flex flex-wrap items-center justify-center gap-3 bg-slate-900/50 p-1.5 rounded-lg border border-slate-700/50">
                  {/* Playback Mode */}
                  <div className="flex flex-col items-center">
-                    <span className="text-xs font-bold uppercase text-slate-400 mb-1">Mode</span>
+                    <span className="text-[10px] text-slate-400 mb-0.5">Mode</span>
                     <div className="flex bg-slate-800 rounded-md p-0.5 border border-slate-700">
                       <button onClick={() => setPlaybackMode('SWITCH')} className={`px-4 py-2 rounded text-sm font-bold transition-all ${playbackMode === 'SWITCH' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}>SWITCH</button>
                       <button onClick={() => setPlaybackMode('MIX')} className={`px-4 py-2 rounded text-sm font-bold transition-all ${playbackMode === 'MIX' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'}`}>MIX</button>
@@ -615,7 +612,7 @@
 
                  {/* Start Mode */}
                  <div className="flex flex-col items-center">
-                    <span className="text-xs font-bold uppercase text-slate-400 mb-1">Start</span>
+                    <span className="text-[10px] text-slate-400 mb-0.5">Start</span>
                     <div className="flex bg-slate-800 rounded-md p-0.5 border border-slate-700">
                       <button onClick={() => setStartMode('CUT')} className={`px-4 py-2 rounded text-sm font-bold transition-all ${startMode === 'CUT' ? 'bg-green-600 text-white' : 'text-slate-400 hover:text-white'}`}>CUT</button>
                       <button onClick={() => setStartMode('FADE')} className={`px-4 py-2 rounded text-sm font-bold transition-all ${startMode === 'FADE' ? 'bg-blue-500 text-white' : 'text-slate-400 hover:text-white'}`}>FADE</button>
@@ -624,7 +621,7 @@
 
                  {/* Stop Mode */}
                  <div className="flex flex-col items-center">
-                    <span className="text-xs font-bold uppercase text-slate-400 mb-1">Stop</span>
+                    <span className="text-[10px] text-slate-400 mb-0.5">Stop</span>
                     <div className="flex bg-slate-800 rounded-md p-0.5 border border-slate-700">
                       <button onClick={() => setStopMode('CUT')} className={`px-4 py-2 rounded text-sm font-bold transition-all ${stopMode === 'CUT' ? 'bg-red-500 text-white' : 'text-slate-400 hover:text-white'}`}>CUT</button>
                       <button onClick={() => setStopMode('FADE')} className={`px-4 py-2 rounded text-sm font-bold transition-all ${stopMode === 'FADE' ? 'bg-blue-500 text-white' : 'text-slate-400 hover:text-white'}`}>FADE</button>
@@ -634,7 +631,7 @@
                  {/* Common Fade Duration (Visible if any FADE is active) */}
                  {(startMode === 'FADE' || stopMode === 'FADE') && (
                    <div className="flex flex-col items-center animate-in fade-in zoom-in duration-200">
-                      <span className="text-xs font-bold uppercase text-slate-400 mb-1">Fade Time</span>
+                      <span className="text-[10px] text-slate-400 mb-0.5">Fade Time</span>
                       <div className="flex items-center gap-2">
                         <div className="flex bg-slate-800 rounded-md border border-slate-700 overflow-hidden">
                           {FADE_DURATIONS.map(dur => (<button key={dur} onClick={() => setGlobalFadeDuration(dur)} className={`px-3 py-2 text-sm font-bold border-r border-slate-700 last:border-0 transition-colors ${globalFadeDuration === dur ? 'bg-blue-500/20 text-blue-300' : 'text-slate-500 hover:bg-slate-700 hover:text-slate-300'}`}>{dur}s</button>))}
@@ -712,6 +709,9 @@
               audioCtx={audioCtx} 
             />
           )}
+          {showManual && (
+            <ManualModal onClose={() => setShowManual(false)} />
+          )}
           {confirmDeleteId !== null && (
             <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
               <div className="bg-slate-800 rounded-xl p-6 max-w-sm w-full border border-slate-700 shadow-2xl">
@@ -730,6 +730,223 @@
         </div>
       );
     }
+    
+    // --- Manual Modal ---
+    const ManualModal = ({ onClose }) => {
+      return (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="bg-white text-slate-800 rounded-xl w-full max-w-4xl h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="bg-slate-900 text-white p-4 flex justify-between items-center flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <BookOpen className="text-blue-400" />
+                <h2 className="text-lg font-bold">操作マニュアル</h2>
+              </div>
+              <button onClick={onClose} className="p-2 hover:bg-slate-700 rounded-full"><X size={20} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-12">
+                <section>
+                  <h2 className="text-xl font-bold border-b-2 border-blue-500 pb-2 mb-6 flex items-center gap-2">
+                    <span className="bg-blue-500 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm">1</span>
+                    画面の見方と基本操作
+                  </h2>
+                  <div className="grid md:grid-cols-2 gap-8">
+                    <div className="bg-slate-800 p-4 rounded-xl shadow-lg text-white relative">
+                      <div className="border-b border-slate-700 pb-2 mb-2 flex justify-between items-center">
+                        <span className="font-bold">T-PAD</span>
+                        <div className="flex gap-2">
+                          <span className="bg-slate-700 px-2 py-1 rounded text-xs">Grid 10</span>
+                          <span className="bg-slate-700 px-2 py-1 rounded text-xs">EDIT</span>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 mb-4">
+                        <div className="aspect-square bg-blue-600 border-b-4 border-blue-800 rounded-xl flex items-center justify-center relative"><span className="text-xs">Pad 1</span></div>
+                        <div className="aspect-square bg-slate-700 border-b-4 border-slate-600 rounded-xl flex items-center justify-center relative"><span className="text-xs opacity-50">空</span></div>
+                        <div className="aspect-square bg-slate-700 border-b-4 border-slate-600 rounded-xl flex items-center justify-center relative"><span className="text-xs opacity-50">空</span></div>
+                      </div>
+                      <div className="absolute top-12 left-10 w-8 h-8 border-2 border-yellow-400 rounded-full animate-ping"></div>
+                      <div className="absolute top-14 left-20 bg-yellow-400 text-black text-xs font-bold px-2 py-1 rounded shadow">
+                        タップして再生
+                      </div>
+                    </div>
+                    <div className="space-y-4">
+                      <div>
+                        <h3 class="font-bold text-lg mb-2">音声の読み込み</h3>
+                        <p class="text-sm leading-relaxed">
+                          「空」または「音声読込」と書かれたパッドをタップ（クリック）すると、ファイル選択画面が開きます。<br/>
+                          PCの場合はドラッグ＆ドロップでも読み込めます。
+                        </p>
+                      </div>
+                      <div>
+                        <h3 class="font-bold text-lg mb-2">再生と停止</h3>
+                        <p class="text-sm leading-relaxed">
+                          読み込み済みのパッドをタップすると再生します。<br/>
+                          もう一度タップすると停止します（設定により挙動が変わります）。
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section>
+                  <h2 class="text-xl font-bold border-b-2 border-green-500 pb-2 mb-6 flex items-center gap-2">
+                    <span class="bg-green-500 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm">2</span>
+                    再生モードの設定（画面上部）
+                  </h2>
+                  <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                    <div class="grid gap-6 md:grid-cols-3 text-center">
+                      <div class="space-y-2">
+                        <div class="inline-flex bg-slate-800 rounded p-1">
+                          <span class="px-2 py-1 bg-indigo-600 text-white text-xs rounded">SWITCH</span>
+                          <span class="px-2 py-1 text-slate-400 text-xs">MIX</span>
+                        </div>
+                        <h4 class="font-bold text-sm">Mode (全体動作)</h4>
+                        <ul class="text-xs text-left list-disc list-inside text-slate-600 space-y-1">
+                          <li><b>SWITCH</b>: 音を切り替えます。別のパッドを押すと前の音は止まります。</li>
+                          <li><b>MIX</b>: 音を重ねます。BGMの上に効果音を鳴らす時などに使います。</li>
+                        </ul>
+                      </div>
+                      <div class="space-y-2">
+                        <div class="inline-flex bg-slate-800 rounded p-1">
+                          <span class="px-2 py-1 bg-green-600 text-white text-xs rounded">CUT</span>
+                          <span class="px-2 py-1 text-slate-400 text-xs">FADE</span>
+                        </div>
+                        <h4 class="font-bold text-sm">Start (開始時)</h4>
+                        <ul class="text-xs text-left list-disc list-inside text-slate-600 space-y-1">
+                          <li><b>CUT</b>: 押した瞬間に本来の音量で再生します。ポン出し向け。</li>
+                          <li><b>FADE</b>: ふわっと音が入ります（クロスフェード用）。</li>
+                        </ul>
+                      </div>
+                      <div class="space-y-2">
+                        <div class="inline-flex bg-slate-800 rounded p-1">
+                          <span class="px-2 py-1 text-slate-400 text-xs">CUT</span>
+                          <span class="px-2 py-1 bg-blue-500 text-white text-xs rounded">FADE</span>
+                        </div>
+                        <h4 class="font-bold text-sm">Stop (停止時)</h4>
+                        <ul class="text-xs text-left list-disc list-inside text-slate-600 space-y-1">
+                          <li><b>CUT</b>: 即座に音が止まります。</li>
+                          <li><b>FADE</b>: 余韻を残してフェードアウトします。</li>
+                        </ul>
+                      </div>
+                    </div>
+                    <div class="mt-4 pt-4 border-t text-center">
+                      <span class="text-xs font-bold bg-slate-200 px-2 py-1 rounded">Fade Time</span>
+                      <span class="text-xs ml-2">フェードイン・アウトにかかる時間を設定します（0.5秒〜3.0秒または数値入力）。</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section>
+                  <h2 class="text-xl font-bold border-b-2 border-amber-500 pb-2 mb-6 flex items-center gap-2">
+                    <span class="bg-amber-500 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm">3</span>
+                    波形編集と詳細設定
+                  </h2>
+                  <div class="space-y-6">
+                    <p class="text-sm">
+                      パッドの右上にある <span class="inline-block bg-black text-white p-1 rounded-full"><Settings size={12} /></span> ボタンを押すと編集画面が開きます。
+                    </p>
+                    <div class="bg-slate-900 rounded-lg p-6 text-white">
+                      <div class="h-24 bg-slate-800 rounded relative overflow-hidden mb-4">
+                        <div class="absolute inset-0 flex items-center justify-center text-blue-500 opacity-30">Waveform Graphic</div>
+                        <div class="absolute top-0 bottom-0 left-[20%] w-0.5 bg-green-500"></div>
+                        <div class="absolute top-0 bottom-0 left-[80%] w-0.5 bg-red-500"></div>
+                        <div class="absolute top-0 bottom-0 left-[40%] w-0.5 bg-white shadow-white shadow-[0_0_5px]"></div>
+                      </div>
+                      <div class="flex justify-between text-xs mb-4">
+                        <span class="text-green-400 font-bold">開始位置 (Start)</span>
+                        <span class="text-white font-bold">再生ヘッド (Current)</span>
+                        <span class="text-red-400 font-bold">終了位置 (End)</span>
+                      </div>
+                    </div>
+                    <div class="grid md:grid-cols-2 gap-6">
+                      <div class="space-y-3">
+                         <h4 class="font-bold text-slate-700 border-b border-slate-200 pb-1">再生コントロール</h4>
+                         <ul class="text-sm space-y-2 text-slate-600">
+                           <li><b>プレビュー再生:</b> 編集中の設定で音を確認できます。</li>
+                           <li><b>波形タップ:</b> タップした位置から即座に再生します（シーク機能）。</li>
+                         </ul>
+                      </div>
+                       <div class="space-y-3">
+                         <h4 class="font-bold text-slate-700 border-b border-slate-200 pb-1">範囲とエフェクト</h4>
+                         <ul class="text-sm space-y-2 text-slate-600">
+                           <li><b>範囲指定:</b> 緑（開始）と赤（終了）の線をドラッグするか、下のスライダー・数値入力で調整します。</li>
+                           <li><b>現在位置ボタン:</b> 再生中の位置を開始/終了点に設定できます。</li>
+                           <li><b>フェード設定:</b> パッド個別のフェードイン・アウト時間を設定できます。</li>
+                           <li><b>リピート/タイマー:</b> ループ再生や時刻指定再生の設定ができます。</li>
+                         </ul>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section>
+                  <h2 class="text-xl font-bold border-b-2 border-orange-500 pb-2 mb-6 flex items-center gap-2">
+                    <span class="bg-orange-500 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm">4</span>
+                    EDITモード（パッドの整理）
+                  </h2>
+                  <div class="bg-amber-50 p-6 rounded-xl border border-amber-200">
+                    <div class="flex items-start gap-4">
+                      <div class="flex-shrink-0 mt-1">
+                         <span class="font-bold bg-amber-200 text-amber-900 px-2 py-1 rounded text-sm border border-amber-300">EDIT</span>
+                      </div>
+                      <div>
+                        <p class="text-sm text-amber-900 mb-4 font-medium">
+                          画面右上の <span class="font-bold">EDIT</span> ボタンを押すと、編集モード（背景がオレンジ色）になります。<br/>
+                          このモードでは音は再生されず、パッドの整理が行えます。
+                        </p>
+                        <div class="grid md:grid-cols-2 gap-6">
+                           <div class="bg-white p-4 rounded-lg border border-amber-100 shadow-sm">
+                              <h4 class="font-bold text-amber-800 mb-2 flex items-center gap-2">
+                                <span class="bg-red-500 text-white rounded-full p-1"><Trash2 size={12} /></span>
+                                削除 (Delete)
+                              </h4>
+                              <p class="text-xs text-slate-600">
+                                パッド右上に表示されるゴミ箱アイコンをタップすると、そのパッドの音声ファイルと設定を完全に消去します。
+                              </p>
+                           </div>
+                           <div class="bg-white p-4 rounded-lg border border-amber-100 shadow-sm">
+                              <h4 class="font-bold text-amber-800 mb-2 flex items-center gap-2">
+                                <span class="bg-slate-400 text-white rounded-full p-1"><Move size={12} /></span>
+                                並べ替え (Swap)
+                              </h4>
+                              <p class="text-xs text-slate-600">
+                                1つ目のパッドをタップして選択（枠が点滅）し、次に2つ目のパッドをタップすると、2つの場所を入れ替えることができます。
+                              </p>
+                           </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section>
+                  <h2 class="text-xl font-bold border-b-2 border-purple-500 pb-2 mb-6 flex items-center gap-2">
+                    <span class="bg-purple-500 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm">5</span>
+                    データの保存と読み込み
+                  </h2>
+                  <div class="text-sm space-y-4">
+                    <p>
+                      このアプリはブラウザにデータを自動保存しますが、別のPCに移したりバックアップを取るために「プロジェクトファイル」として書き出すことができます。
+                    </p>
+                    <div class="flex gap-4 flex-wrap">
+                      <div class="bg-white p-4 rounded shadow border border-slate-200 flex-1">
+                        <h4 class="font-bold flex items-center gap-2 mb-2"><Download className="text-blue-600" size={16} /> SAVE (保存)</h4>
+                        <p class="text-slate-600">現在のすべてのパッド設定と音声データを、1つのファイル（.tsp）としてダウンロードします。</p>
+                      </div>
+                      <div class="bg-white p-4 rounded shadow border border-slate-200 flex-1">
+                        <h4 class="font-bold flex items-center gap-2 mb-2"><FolderOpen className="text-green-600" size={16} /> LOAD (読込)</h4>
+                        <p class="text-slate-600">保存した .tsp ファイルを読み込んで、以前の状態を復元します。（現在のデータは上書きされます）</p>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+            </div>
+            <div className="p-4 bg-slate-100 text-center flex-shrink-0 border-t border-slate-200">
+              <button onClick={onClose} className="px-6 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-full font-bold text-sm transition-colors">閉じる</button>
+            </div>
+          </div>
+        </div>
+      );
+    };
 
     const PadBase = ({ pad, playingInfo, audioCtx, isEditMode, isSwapSelected, onInteraction }) => {
       const hasAudio = !!pad.buffer || !!pad.blob;
